@@ -1,0 +1,6 @@
+customtkinter>=5.2.0
+pillow>=10.0.0
+pynput>=1.8.0
+pywin32>=306
+numpy>=1.24.0
+opencv-python>=4.8.0
