@@ -1,5 +1,5 @@
 """
-Unit Tests for Shohoj Macro Event AST & Serialization
+Unit Tests for Shohoj Macro Event AST & Serialization (v2.0.0 Enterprise)
 """
 
 import unittest
@@ -27,8 +27,8 @@ class TestMacroEvents(unittest.TestCase):
             comment="Test Wander Zone",
         )
         d = ev.to_dict()
-        self.assertEqual(d["event_type"], "HUMAN_WANDER_ZONE")
-        self.assertEqual(d["error_policy"], "SKIP")
+        self.assertEqual(d["event_type"], "human_wander_zone")
+        self.assertEqual(d["error_policy"], "skip")
 
         restored = MacroEvent.from_dict(d)
         self.assertEqual(restored.event_type, EventType.HUMAN_WANDER_ZONE)
@@ -40,7 +40,7 @@ class TestMacroEvents(unittest.TestCase):
     def test_event_summaries(self):
         ev_click = MacroEvent(event_type=EventType.MOUSE_CLICK, x=50, y=80, button="right", human_target_radius=15)
         self.assertIn("Right Click", ev_click.get_summary())
-        self.assertIn("±15px", ev_click.get_summary())
+        self.assertIn("R=15", ev_click.get_summary())
 
         ev_type = MacroEvent(event_type=EventType.TEXT_TYPE, text="Hello World", wpm=80)
         self.assertIn("Hello World", ev_type.get_summary())

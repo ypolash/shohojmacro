@@ -1,6 +1,6 @@
 """
-High-Precision Playback Engine with Error Policies, Focus Lock & Panic Fail-Safe
-Executes recorded and handcrafted macro sequences with sub-millisecond accuracy.
+High-Precision Playback Engine with Visual Frame Synchronization & CSV Data Injection (v2.0.0 Enterprise)
+Executes AST event sequences with sub-millisecond precision, auto-adjusting image anchors, and CSV iteration.
 """
 
 import time
@@ -14,6 +14,8 @@ from shohoj_macro.core.stealth_core import StealthCore
 from shohoj_macro.core.bio_rhythm import BioRhythmEngine
 from shohoj_macro.core.triggers import TriggerEvaluator
 from shohoj_macro.core.window_tracker import WindowTracker
+from shohoj_macro.core.cv_engine import CVTemplateMatcher
+from shohoj_macro.core.csv_engine import CSVDataEngine
 from shohoj_macro.utils.timer import hires_sleep_ms, hires_sleep
 from shohoj_macro.utils.win32_input import (
     send_mouse_click,
@@ -23,7 +25,7 @@ from shohoj_macro.utils.win32_input import (
     send_key_down,
     send_key_up,
     send_key_press,
-    send_text,
+    send_smart_text,
     set_input_blocked,
     get_cursor_pos,
     get_foreground_window_title,
@@ -38,7 +40,7 @@ class PlaybackState:
 
 
 class MacroPlayer:
-    """Master playback engine executing macro action trees."""
+    """Master playback engine executing macro action trees with CV and CSV engines."""
 
     def __init__(
         self,
@@ -61,8 +63,10 @@ class MacroPlayer:
         self.bio_rhythm_enabled = True
         self.block_physical_input = False
         self.foreground_lock_title = ""
-        self.corner_fail_safe = True  # Move to (0, 0) to panic abort
+        self.corner_fail_safe = True
 
+        # Sub-Engines
+        self.csv_engine = CSVDataEngine()
         self._events: list[MacroEvent] = []
         self._thread: Optional[threading.Thread] = None
         self._pause_event = threading.Event()
@@ -86,7 +90,12 @@ class MacroPlayer:
                 self.on_log_message("No actions in timeline to play.", "WARN")
             return
 
-        self.total_loops = loops
+        # If CSV is loaded, set total loops to row count unless specified otherwise
+        if self.csv_engine.is_loaded and loops == 1 and self.csv_engine.get_row_count() > 1:
+            self.total_loops = self.csv_engine.get_row_count()
+        else:
+            self.total_loops = loops
+
         self.speed_multiplier = max(0.1, min(20.0, speed))
         self._stop_requested = False
         self._pause_event.set()
@@ -146,8 +155,11 @@ class MacroPlayer:
         try:
             while not self._stop_requested:
                 current_loop += 1
+                row_idx = current_loop - 1  # 0-indexed for CSV
+
                 if self.on_log_message:
-                    loop_str = f"Loop {current_loop}/{self.total_loops}" if self.total_loops > 0 else f"Loop {current_loop} (Infinite)"
+                    csv_info = f" [CSV Row {current_loop}/{self.csv_engine.get_row_count()}]" if self.csv_engine.is_loaded else ""
+                    loop_str = f"Loop {current_loop}/{self.total_loops}{csv_info}" if self.total_loops > 0 else f"Loop {current_loop} (Infinite)"
                     self.on_log_message(f"--- Starting {loop_str} ---", "INFO")
 
                 step_idx = 0
@@ -173,7 +185,7 @@ class MacroPlayer:
                     if self.on_step_started:
                         self.on_step_started(step_idx, event)
 
-                    step_success = self._execute_event_with_retry(event)
+                    step_success = self._execute_event_with_retry(event, row_idx)
 
                     if not step_success:
                         if event.error_policy == ErrorPolicy.STOP:
@@ -222,22 +234,22 @@ class MacroPlayer:
             if self.on_playback_finished:
                 self.on_playback_finished(success, err_msg)
 
-    def _execute_event_with_retry(self, event: MacroEvent) -> bool:
+    def _execute_event_with_retry(self, event: MacroEvent, row_idx: int) -> bool:
         max_attempts = 3 if event.error_policy == ErrorPolicy.RETRY_3 else 1
         for attempt in range(max_attempts):
             try:
-                self._execute_single_event(event)
+                self._execute_single_event(event, row_idx)
                 return True
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    time.sleep(0.1)
+                    time.sleep(0.15)
                 else:
                     if self.on_log_message:
                         self.on_log_message(f"Action error: {e}", "ERROR")
                     return False
         return False
 
-    def _execute_single_event(self, event: MacroEvent):
+    def _execute_single_event(self, event: MacroEvent, row_idx: int):
         effective_speed = self.speed_multiplier * self._bio_rhythm.get_speed_multiplier()
         t = event.event_type
 
@@ -262,7 +274,6 @@ class MacroPlayer:
                     event.x, event.y, event.human_target_radius
                 )
 
-            # Move to target only if cursor is not already there
             cur_x, cur_y = get_cursor_pos()
             if math.hypot(target_x - cur_x, target_y - cur_y) > 3.0:
                 if self.humanizer_enabled:
@@ -278,6 +289,89 @@ class MacroPlayer:
             if event.click_count == 2:
                 time.sleep(0.08)
                 send_mouse_click(event.button, hold_ms=hold_ms)
+
+        elif t == EventType.VISUAL_ANCHOR_CLICK:
+            # 1. Decode template image from base64
+            if not event.template_base64:
+                raise ValueError(f"Visual anchor '{event.template_name}' has no template image.")
+
+            template_bgr = CVTemplateMatcher.decode_base64_to_image(event.template_base64)
+            roi = tuple(event.search_roi) if event.search_roi else None
+
+            # 2. Wait / Search for template on screen
+            result = CVTemplateMatcher.wait_for_frame_state(
+                template_bgr=template_bgr,
+                should_exist=True,
+                search_roi=roi,
+                confidence_threshold=event.confidence_threshold,
+                timeout_sec=event.timeout_ms / 1000.0,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
+            )
+
+            if not result.found:
+                raise TimeoutError(f"Visual Anchor '{event.template_name}' not found (Confidence: {result.confidence*100:.1f}%)")
+
+            # 3. Dynamic Self-Adjustment: Click center of found match
+            target_x = result.center_x + event.click_offset_x
+            target_y = result.center_y + event.click_offset_y
+
+            if self.humanizer_enabled and event.human_target_radius > 0:
+                target_x, target_y = HumanizerEngine.sample_gaussian_point_in_circle(
+                    target_x, target_y, event.human_target_radius
+                )
+
+            if self.humanizer_enabled:
+                HumanizerEngine.move_humanized(
+                    target_x, target_y, duration_ms=130.0 / effective_speed, curve_type="windmouse", cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe()
+                )
+            else:
+                from shohoj_macro.utils.win32_input import send_mouse_move
+                send_mouse_move(target_x, target_y)
+
+            hold_ms = StealthCore.calculate_human_click_hold_ms() if self.humanizer_enabled else 45.0
+            send_mouse_click(event.button, hold_ms=hold_ms)
+            if self.on_log_message:
+                self.on_log_message(f"🎯 Auto-Adjusted Click on '{event.template_name}' at ({target_x}, {target_y}) [Match: {result.confidence*100:.1f}%]", "SUCCESS")
+
+        elif t == EventType.WAIT_UNTIL_FRAME_APPEARS:
+            if not event.template_base64:
+                raise ValueError(f"Wait frame '{event.template_name}' has no template image.")
+
+            template_bgr = CVTemplateMatcher.decode_base64_to_image(event.template_base64)
+            roi = tuple(event.search_roi) if event.search_roi else None
+
+            result = CVTemplateMatcher.wait_for_frame_state(
+                template_bgr=template_bgr,
+                should_exist=True,
+                search_roi=roi,
+                confidence_threshold=event.confidence_threshold,
+                timeout_sec=event.timeout_ms / 1000.0,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
+            )
+            if not result.found:
+                raise TimeoutError(f"Frame '{event.template_name}' did not appear within {int(event.timeout_ms/1000)}s.")
+            if self.on_log_message:
+                self.on_log_message(f"✅ Frame '{event.template_name}' detected on screen [Match: {result.confidence*100:.1f}%]", "SUCCESS")
+
+        elif t == EventType.WAIT_UNTIL_FRAME_DISAPPEARS:
+            if not event.template_base64:
+                raise ValueError(f"Wait frame '{event.template_name}' has no template image.")
+
+            template_bgr = CVTemplateMatcher.decode_base64_to_image(event.template_base64)
+            roi = tuple(event.search_roi) if event.search_roi else None
+
+            result = CVTemplateMatcher.wait_for_frame_state(
+                template_bgr=template_bgr,
+                should_exist=False,
+                search_roi=roi,
+                confidence_threshold=event.confidence_threshold,
+                timeout_sec=event.timeout_ms / 1000.0,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
+            )
+            if result.found:
+                raise TimeoutError(f"Frame '{event.template_name}' still present after {int(event.timeout_ms/1000)}s.")
+            if self.on_log_message:
+                self.on_log_message(f"✅ Frame '{event.template_name}' vanished from screen.", "SUCCESS")
 
         elif t == EventType.MOUSE_DOWN:
             send_mouse_down(event.button, event.x, event.y)
@@ -310,12 +404,21 @@ class MacroPlayer:
             send_key_up(event.vk_code, event.scan_code)
 
         elif t == EventType.TEXT_TYPE:
-            send_text(event.text, wpm=int(event.wpm * effective_speed))
+            # Interpolate {{variables}} from CSV row if applicable
+            final_text = self.csv_engine.interpolate_text(event.text, row_idx)
+            send_smart_text(final_text, wpm=int(event.wpm * effective_speed), auto_clear_first=event.auto_clear_first)
 
         elif t == EventType.DELAY:
             jitter = random.uniform(-event.jitter_ms, event.jitter_ms) if event.jitter_ms > 0 else 0
             dur_sec = max(0.001, ((event.delay_ms + jitter) / 1000.0) / effective_speed)
             hires_sleep(dur_sec)
+
+        elif t == EventType.HUMAN_WANDER_SLOW:
+            HumanizerEngine.perform_slow_organic_wander(
+                duration_ms=event.duration_ms / effective_speed,
+                speed_profile=event.wander_speed_profile,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
+            )
 
         elif t == EventType.HUMAN_WANDER_ZONE:
             HumanizerEngine.perform_human_wander_zone(

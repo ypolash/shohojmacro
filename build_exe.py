@@ -45,6 +45,8 @@ def build_executable():
         "--hidden-import", "pynput",
         "--hidden-import", "pynput.keyboard._win32",
         "--hidden-import", "pynput.mouse._win32",
+        "--hidden-import", "cv2",
+        "--hidden-import", "numpy",
         "--hidden-import", "customtkinter",
         "--hidden-import", "shohoj_macro",
         # Entry point

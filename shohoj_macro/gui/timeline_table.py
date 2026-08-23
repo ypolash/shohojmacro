@@ -1,6 +1,6 @@
 """
-Interactive Visual Timeline & Step-by-Step Action Table Editor
-Provides multi-selection, bulk operations, right-click context menu, search filter and tooltips.
+Interactive Visual Timeline & Step-by-Step Action Table Editor (v2.0.0 Enterprise)
+Provides multi-selection, bulk operations, visual anchor snipping, search filter and tooltips.
 """
 
 import tkinter as tk
@@ -13,18 +13,20 @@ from shohoj_macro.gui.action_dialogs import MouseActionDialog, DelayActionDialog
 
 
 class TimelineTableEditor(GlassCard):
-    """Visual table editor with multi-selection and bulk operations."""
+    """Visual table editor with multi-selection, visual anchors, and bulk operations."""
 
     def __init__(
         self,
         master,
         on_events_modified: Callable[[], None] = None,
         on_step_selected: Callable[[int], None] = None,
+        on_trigger_snipper: Callable[[], None] = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
         self.on_events_modified = on_events_modified
         self.on_step_selected = on_step_selected
+        self.on_trigger_snipper = on_trigger_snipper
         self.events: list[MacroEvent] = []
         self._filter_query = ""
 
@@ -62,7 +64,22 @@ class TimelineTableEditor(GlassCard):
         self.toolbar = ctk.CTkFrame(self, fg_color="transparent")
         self.toolbar.pack(fill="x", padx=12, pady=(0, 6))
 
-        # Labeled Action Buttons
+        # Snip Visual Anchor Button
+        self.btn_snip = ctk.CTkButton(
+            self.toolbar,
+            text="📸 Snip Anchor",
+            width=92,
+            height=26,
+            corner_radius=6,
+            fg_color="#2A143A",
+            hover_color=GlassTheme.ACCENT_PURPLE,
+            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
+            command=self._on_snip_click,
+        )
+        self.btn_snip.pack(side="left", padx=(0, 4))
+        GlassTooltip(self.btn_snip, "Freeze screen and crop a visual button anchor (Zero-AI CV Auto-Adjust)")
+
+        # Add Action Button
         self.btn_add = ctk.CTkButton(
             self.toolbar,
             text="➕ Add Action",
@@ -74,7 +91,7 @@ class TimelineTableEditor(GlassCard):
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
             command=self._add_action_popup,
         )
-        self.btn_add.pack(side="left", padx=(0, 4))
+        self.btn_add.pack(side="left", padx=2)
         GlassTooltip(self.btn_add, "Add a new mouse or keyboard action step")
 
         self.btn_edit = ctk.CTkButton(
@@ -205,17 +222,17 @@ class TimelineTableEditor(GlassCard):
         )
 
         columns = ("step", "type", "summary", "delay", "status")
-        # Extended selection mode enables Shift+Click and Ctrl+Click multi-selection
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
 
         self.tree.heading("step", text="#")
-        self.tree.column("step", width=40, anchor="center")
+        self.tree.column("step", width=36, anchor="center")
 
+        # Expanded type column width so "Mouse Click" is never truncated!
         self.tree.heading("type", text="Type")
-        self.tree.column("type", width=95, anchor="w")
+        self.tree.column("type", width=145, anchor="w")
 
         self.tree.heading("summary", text="Action Parameters & Details")
-        self.tree.column("summary", width=340, anchor="w")
+        self.tree.column("summary", width=330, anchor="w")
 
         self.tree.heading("delay", text="Delay")
         self.tree.column("delay", width=65, anchor="center")
@@ -239,6 +256,8 @@ class TimelineTableEditor(GlassCard):
 
     def _build_context_menu(self):
         self.context_menu = tk.Menu(self, tearoff=0, bg="#161928", fg="#FFFFFF", activebackground="#00F0FF", activeforeground="#000000", bd=1)
+        self.context_menu.add_command(label="📸 Snip Visual Anchor...", command=self._on_snip_click)
+        self.context_menu.add_separator()
         self.context_menu.add_command(label="✏️ Edit Action...", command=self._edit_selected)
         self.context_menu.add_command(label="📋 Duplicate (Ctrl+D)", command=self._duplicate_selected)
         self.context_menu.add_command(label="👁️ Toggle Enable / Disable", command=self._toggle_selected)
@@ -257,6 +276,10 @@ class TimelineTableEditor(GlassCard):
                 self.tree.selection_set(item)
             self.context_menu.post(event.x_root, event.y_root)
 
+    def _on_snip_click(self):
+        if self.on_trigger_snipper:
+            self.on_trigger_snipper()
+
     def set_events(self, events: list[MacroEvent]):
         self.events = list(events)
         self.refresh()
@@ -265,7 +288,7 @@ class TimelineTableEditor(GlassCard):
         return list(self.events)
 
     def append_event_live(self, ev: MacroEvent):
-        """Appends a new event live during recording without full re-render."""
+        """Appends a new event live during recording."""
         idx = len(self.events)
         self.events.append(ev)
         icon = ev.get_category_icon()
@@ -346,7 +369,7 @@ class TimelineTableEditor(GlassCard):
             if self.on_events_modified:
                 self.on_events_modified()
 
-        if t in (EventType.MOUSE_CLICK, EventType.MOUSE_MOVE, EventType.MOUSE_DOWN, EventType.MOUSE_UP, EventType.HUMAN_WANDER_ZONE):
+        if t in (EventType.MOUSE_CLICK, EventType.MOUSE_MOVE, EventType.MOUSE_DOWN, EventType.MOUSE_UP, EventType.HUMAN_WANDER_ZONE, EventType.VISUAL_ANCHOR_CLICK):
             MouseActionDialog(self, ev, on_save)
         elif t == EventType.DELAY:
             DelayActionDialog(self, ev, on_save)

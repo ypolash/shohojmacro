@@ -1,5 +1,5 @@
 """
-Shohoj Macro - Main Studio Window (Apple-Style Glassmorphism UI)
+Shohoj Macro Studio - Main Application Window (v2.0.0 Enterprise Edition)
 Developed by Polash Khan (ypolash2)
 """
 
@@ -18,6 +18,8 @@ from shohoj_macro.gui.playback_log import PlaybackLogPanel
 from shohoj_macro.gui.dynamic_island import DynamicIslandHUD
 from shohoj_macro.gui.macro_library import MacroLibrarySidebar
 from shohoj_macro.gui.browser_panel import BrowserCompanionPanel
+from shohoj_macro.gui.csv_dock import CSVDockPanel
+from shohoj_macro.gui.image_snipper import ScreenSnipperModal
 from shohoj_macro.gui.settings_dialog import SettingsDialog
 from shohoj_macro.gui.export_dialog import ExportDialog
 from shohoj_macro.gui.about_dialog import AboutDialog
@@ -41,9 +43,9 @@ class ShohojMacroStudio(ctk.CTk):
         init_dpi_awareness()
         GlassTheme.apply_global_settings()
 
-        self.title(f"{__app_name__} v{__version__} • Studio")
-        self.geometry("1200x740")
-        self.minsize(1020, 640)
+        self.title(f"{__app_name__} v{__version__} • Enterprise Studio")
+        self.geometry("1260x780")
+        self.minsize(1080, 680)
         self.configure(fg_color=GlassTheme.BG_DARK)
 
         # Core Engines
@@ -78,8 +80,6 @@ class ShohojMacroStudio(ctk.CTk):
 
         # HUD Window instance
         self.hud_window = None
-        self._record_start_time = None
-        self._record_timer_id = None
 
         # Build UI Structure
         self._build_top_ribbon()
@@ -92,6 +92,7 @@ class ShohojMacroStudio(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.log_panel.log(f"Welcome to {__app_name__} v{__version__} by {__author__} ({__username__})", "SUCCESS")
+        self.log_panel.log("Zero-AI Visual State Engine & CSV Data Dock Ready.", "INFO")
         self.log_panel.log("Global Hotkeys Active: F8 (Record), F9 (Play/Pause), F10 (Emergency Stop)", "INFO")
 
     def _play_sound(self, sound_type="info"):
@@ -177,7 +178,7 @@ class ShohojMacroStudio(ctk.CTk):
         ctk.CTkLabel(self.ribbon, text="Mode:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
         self.opt_rec_mode = ctk.CTkOptionMenu(
             self.ribbon,
-            values=["All Motion", "Clicks & Keys (Clean)", "Keys Only"],
+            values=["Clicks & Keys (Clean)", "All Motion", "Keys Only"],
             width=135,
             height=28,
             font=ctk.CTkFont(size=10),
@@ -185,7 +186,6 @@ class ShohojMacroStudio(ctk.CTk):
         )
         self.opt_rec_mode.set("Clicks & Keys (Clean)")
         self.opt_rec_mode.pack(side="left", padx=(0, 6))
-        GlassTooltip(self.opt_rec_mode, "Select input recording granularity")
 
         # Loops input
         ctk.CTkLabel(self.ribbon, text="Loops:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
@@ -212,7 +212,7 @@ class ShohojMacroStudio(ctk.CTk):
         )
         self.switch_humanizer.select()
         self.switch_humanizer.pack(side="left", padx=4)
-        GlassTooltip(self.switch_humanizer, "Toggle natural smooth Minimum-Jerk trajectories and Gaussian click scatter")
+        GlassTooltip(self.switch_humanizer, "Toggle natural smooth Minimum-Jerk trajectories, 8-12Hz tremors and Gaussian dispersion")
 
         # Right Side Tools
         self.btn_about = ctk.CTkButton(
@@ -284,27 +284,49 @@ class ShohojMacroStudio(ctk.CTk):
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True, padx=14, pady=4)
 
-        # 1. Left Sidebar: Macro Library
-        self.library_sidebar = MacroLibrarySidebar(
+        # 1. Left Sidebar: Tabview for Macro Library + CSV Data Dock
+        self.left_tabs = ctk.CTkTabview(
             self.main_container,
-            width=180,
+            width=210,
+            fg_color=GlassTheme.CARD_BG,
+            segmented_button_selected_color=GlassTheme.ACCENT_BLUE,
+            segmented_button_selected_hover_color=GlassTheme.ACCENT_CYAN,
+        )
+        self.left_tabs.pack(side="left", fill="y", padx=(0, 8))
+
+        self.tab_library = self.left_tabs.add("📁 Library")
+        self.tab_csv = self.left_tabs.add("📊 CSV Data")
+
+        # Macro Library in Tab 1
+        self.library_sidebar = MacroLibrarySidebar(
+            self.tab_library,
+            width=190,
             on_macro_selected=self._load_macro_from_path,
         )
-        self.library_sidebar.pack(side="left", fill="y", padx=(0, 8))
+        self.library_sidebar.pack(fill="both", expand=True)
+
+        # CSV Dock in Tab 2
+        self.csv_dock = CSVDockPanel(
+            self.tab_csv,
+            csv_engine=self.player.csv_engine,
+            on_dataset_changed=self._on_csv_dataset_changed,
+        )
+        self.csv_dock.pack(fill="both", expand=True)
 
         # 2. Center: Timeline Table Editor
         self.timeline = TimelineTableEditor(
             self.main_container,
             on_events_modified=self._on_timeline_modified,
             on_step_selected=self._on_step_selected,
+            on_trigger_snipper=self._launch_screen_snipper,
         )
         self.timeline.pack(side="left", fill="both", expand=True, padx=(0, 8))
 
         # 3. Right Side: Visualizer, Browser Panel & Log
-        self.right_panel = ctk.CTkFrame(self.main_container, width=300, fg_color="transparent")
+        self.right_panel = ctk.CTkFrame(self.main_container, width=310, fg_color="transparent")
         self.right_panel.pack(side="right", fill="y")
 
-        self.trajectory_canvas = TrajectoryCanvas(self.right_panel, width=290, height=140)
+        self.trajectory_canvas = TrajectoryCanvas(self.right_panel, width=300, height=140)
         self.trajectory_canvas.pack(fill="x", pady=(0, 8))
 
         self.browser_panel = BrowserCompanionPanel(
@@ -338,6 +360,38 @@ class ShohojMacroStudio(ctk.CTk):
 
     # ================= Action Callbacks =================
 
+    def _launch_screen_snipper(self):
+        """Launches the interactive freeze-frame Screen Snipper."""
+        self.withdraw()  # Temporarily hide studio window for clean capture
+
+        def on_snip_completed(name: str, b64_str: str, conf: float, cx: int, cy: int):
+            self.deiconify()
+            # Create Visual Anchor MacroEvent
+            ev = MacroEvent(
+                event_type=EventType.VISUAL_ANCHOR_CLICK,
+                x=cx,
+                y=cy,
+                template_name=name,
+                template_base64=b64_str,
+                confidence_threshold=conf,
+                human_target_radius=8,
+                delay_after_ms=200,
+            )
+            self.timeline.append_event_live(ev)
+            self.trajectory_canvas.update_trajectory(self.timeline.get_events())
+            self.log_panel.log(f"Added Visual Anchor '{name}' (Confidence: {int(conf*100)}%)", "SUCCESS")
+
+        self.after(200, lambda: ScreenSnipperModal(self, on_snip_completed))
+
+    def _on_csv_dataset_changed(self):
+        count = self.player.csv_engine.get_row_count()
+        if count > 0:
+            self.ent_loops.delete(0, "end")
+            self.ent_loops.insert(0, str(count))
+            self.log_panel.log(f"CSV Dataset linked ({count} rows). Auto-set loops to {count}.", "SUCCESS")
+        else:
+            self.log_panel.log("CSV Dataset unlinked.", "INFO")
+
     def _on_speed_changed(self, value):
         self.lbl_speed_val.configure(text=f"{value:.1f}x")
 
@@ -353,10 +407,9 @@ class ShohojMacroStudio(ctk.CTk):
     def _on_humanizer_toggle(self):
         enabled = bool(self.switch_humanizer.get())
         self.player.humanizer_enabled = enabled
-        self.log_panel.log(f"Humanizer Physics {'Enabled' if enabled else 'Disabled'}", "INFO")
+        self.log_panel.log(f"Humanizer Kinematics {'Enabled' if enabled else 'Disabled'}", "INFO")
 
     def _show_hud_auto(self):
-        """Automatically spawns HUD if enabled in settings."""
         if self.settings.get("auto_popup_hud", True):
             if not self.hud_window or not self.hud_window.winfo_exists():
                 self.hud_window = DynamicIslandHUD(
@@ -381,11 +434,9 @@ class ShohojMacroStudio(ctk.CTk):
             if self.player.is_playing():
                 self.player.stop()
 
-            # Clear timeline for fresh recording
             self.timeline.set_events([])
             self.trajectory_canvas.update_trajectory([])
 
-            # Determine mode
             mode_choice = self.opt_rec_mode.get()
             rec_mode = "CLICKS_AND_KEYS" if "Clean" in mode_choice else ("KEYS_ONLY" if "Keys" in mode_choice else "ALL")
 
@@ -455,7 +506,6 @@ class ShohojMacroStudio(ctk.CTk):
         self.after(0, self._stop_all)
 
     def _on_event_recorded(self, ev: MacroEvent):
-        """Live event callback from Recorder thread."""
         def _add_live():
             self.timeline.append_event_live(ev)
             self.trajectory_canvas.update_trajectory(self.timeline.get_events())
