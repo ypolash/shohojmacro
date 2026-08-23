@@ -1,7 +1,6 @@
 """
 Apple-Style Dynamic Island Floating Mini-HUD Widget
-A sleek, draggable, semi-transparent top-screen capsule HUD showing live status
-for gaming and full-screen automation workflows.
+Presents live on-screen visual proof of recording, live action count, and playback progress.
 """
 
 import tkinter as tk
@@ -32,15 +31,14 @@ class DynamicIslandHUD(ctk.CTkToplevel):
         self.config(bg="#010204")
         self.wm_attributes("-transparentcolor", "#010204")
 
-        # Geometry: centered near top of primary screen
+        # Geometry
         screen_w = self.winfo_screenwidth()
-        hud_w = 340
-        hud_h = 44
+        hud_w = 380
+        hud_h = 46
         pos_x = int((screen_w - hud_w) / 2)
         pos_y = 18
         self.geometry(f"{hud_w}x{hud_h}+{pos_x}+{pos_y}")
 
-        # Dragging support
         self._drag_start_x = 0
         self._drag_start_y = 0
 
@@ -54,7 +52,7 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             fg_color="#10121A",
             border_color=GlassTheme.CARD_BORDER_GLOW,
             border_width=1.5,
-            corner_radius=22,
+            corner_radius=23,
         )
         self.capsule.pack(fill="both", expand=True, padx=2, pady=2)
 
@@ -63,25 +61,40 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             self.capsule,
             text="●",
             text_color=GlassTheme.ACCENT_CYAN,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             width=20,
         )
-        self.status_dot.pack(side="left", padx=(14, 4))
+        self.status_dot.pack(side="left", padx=(12, 2))
 
-        # Status Text (e.g., "IDLE" / "REC 00:12" / "PLAY Loop 1/5")
+        # Status Label & Action Count
         self.status_label = ctk.CTkLabel(
             self.capsule,
-            text="Shohoj Macro",
+            text="Shohoj Macro • Ready",
             text_color=GlassTheme.TEXT_PRIMARY,
-            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=12, weight="bold"),
+            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
         )
         self.status_label.pack(side="left", padx=4)
 
-        # Quick Control Buttons
+        # Close / Dismiss Button
+        self.btn_close = ctk.CTkButton(
+            self.capsule,
+            text="✕",
+            width=22,
+            height=22,
+            corner_radius=11,
+            fg_color="transparent",
+            hover_color="#2A161A",
+            text_color=GlassTheme.TEXT_MUTED,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            command=self.destroy,
+        )
+        self.btn_close.pack(side="right", padx=(2, 10))
+
+        # Stop Button
         self.btn_stop = ctk.CTkButton(
             self.capsule,
-            text="⏹ Stop",
-            width=54,
+            text="⏹ Stop (F10)",
+            width=76,
             height=26,
             corner_radius=13,
             fg_color="#3A181C",
@@ -90,12 +103,13 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=10, weight="bold"),
             command=self._on_stop_click,
         )
-        self.btn_stop.pack(side="right", padx=(4, 12))
+        self.btn_stop.pack(side="right", padx=3)
 
+        # Play/Pause Action Button
         self.btn_action = ctk.CTkButton(
             self.capsule,
             text="▶ Play",
-            width=54,
+            width=58,
             height=26,
             corner_radius=13,
             fg_color="#182A3A",
@@ -104,7 +118,7 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=10, weight="bold"),
             command=self._on_action_click,
         )
-        self.btn_action.pack(side="right", padx=4)
+        self.btn_action.pack(side="right", padx=2)
 
     def _start_drag(self, event):
         self._drag_start_x = event.x
@@ -115,15 +129,27 @@ class DynamicIslandHUD(ctk.CTkToplevel):
         y = self.winfo_y() - self._drag_start_y + event.y
         self.geometry(f"+{x}+{y}")
 
-    def update_status(self, state: str, detail: str = ""):
-        """Updates Dynamic Island live indicator."""
+    def update_status(self, state: str, detail: str = "", count: int = 0):
+        """Updates Dynamic Island live indicator and action count."""
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+
         if state == "RECORDING":
             self.status_dot.configure(text_color=GlassTheme.ACCENT_RED)
-            self.status_label.configure(text=f"REC {detail}" if detail else "RECORDING")
+            txt = f"RECORDING"
+            if count > 0:
+                txt += f" ({count} actions)"
+            if detail:
+                txt += f" • {detail}"
+            self.status_label.configure(text=txt)
             self.btn_action.configure(text="⏹ Rec", fg_color="#3A181C", text_color=GlassTheme.ACCENT_RED)
         elif state == "PLAYING":
             self.status_dot.configure(text_color=GlassTheme.ACCENT_EMERALD)
-            self.status_label.configure(text=f"PLAY {detail}" if detail else "PLAYING")
+            txt = f"PLAYING {detail}" if detail else "PLAYING"
+            self.status_label.configure(text=txt)
             self.btn_action.configure(text="⏸ Pause", fg_color="#3A2814", text_color=GlassTheme.ACCENT_ORANGE)
         elif state == "PAUSED":
             self.status_dot.configure(text_color=GlassTheme.ACCENT_ORANGE)
@@ -131,7 +157,7 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             self.btn_action.configure(text="▶ Resume", fg_color="#182A3A", text_color=GlassTheme.ACCENT_CYAN)
         else:
             self.status_dot.configure(text_color=GlassTheme.ACCENT_CYAN)
-            self.status_label.configure(text="Shohoj Macro • Idle")
+            self.status_label.configure(text="Shohoj Macro • Ready")
             self.btn_action.configure(text="▶ Play", fg_color="#182A3A", text_color=GlassTheme.ACCENT_CYAN)
 
     def _on_action_click(self):

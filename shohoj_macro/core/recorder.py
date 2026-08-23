@@ -1,6 +1,6 @@
 """
-High-Precision Input Recorder with RDP Path Compression
-Captures low-level mouse and keyboard events with microsecond timestamps.
+High-Precision Input Recorder with RDP Path Compression & Hotkey Suppression
+Captures low-level mouse and keyboard events with configurable noise filters and modes.
 """
 
 import time
@@ -12,13 +12,17 @@ from shohoj_macro.utils.path_simplify import rdp_simplify
 
 
 class MacroRecorder:
-    """Records global input events with configurable noise filters."""
+    """Records global input events with configurable noise filters and hotkey exclusion."""
 
     def __init__(self, on_event_recorded: Callable[[MacroEvent], None] = None):
         self.on_event_recorded = on_event_recorded
         self.is_recording = False
-        self.record_mouse_moves = True
-        self.path_compression_epsilon = 2.5  # RDP pixel tolerance
+        self.recording_mode = "ALL"  # "ALL", "CLICKS_AND_KEYS", "KEYS_ONLY"
+        self.path_compression_epsilon = 2.5
+        self.max_idle_delay_ms = 1500.0  # Cap idle pauses to 1.5s max
+
+        # Set of hotkeys to suppress from recording
+        self.ignored_keys = {"f8", "f9", "f10", "esc", "pause"}
 
         self._recorded_events: list[MacroEvent] = []
         self._last_event_time = 0.0
@@ -27,14 +31,19 @@ class MacroRecorder:
         self._pending_move_points: list[tuple[int, int]] = []
         self._move_lock = threading.Lock()
 
-    def start(self, record_moves: bool = True):
+    def set_ignored_keys(self, keys: list[str]):
+        """Sets custom hotkey strings to ignore from recording."""
+        self.ignored_keys = {k.strip("<>").lower() for k in keys}
+        self.ignored_keys.update({"f8", "f9", "f10", "esc"})
+
+    def start(self, mode: str = "ALL"):
         """Starts global hook capture."""
         if self.is_recording:
             return
 
         self._recorded_events.clear()
         self._pending_move_points.clear()
-        self.record_mouse_moves = record_moves
+        self.recording_mode = mode
         self.is_recording = True
         self._last_event_time = time.perf_counter()
 
@@ -54,7 +63,7 @@ class MacroRecorder:
         self._keyboard_listener.start()
 
     def stop(self) -> list[MacroEvent]:
-        """Stops recording, flushes pending move trails with RDP compression, and returns events."""
+        """Stops recording, flushes pending move trails, and returns events."""
         if not self.is_recording:
             return self._recorded_events
 
@@ -77,11 +86,14 @@ class MacroRecorder:
         now = time.perf_counter()
         delta = (now - self._last_event_time) * 1000.0
         self._last_event_time = now
-        return max(10.0, delta)
+        # Apply idle pause cap
+        capped = min(self.max_idle_delay_ms, max(15.0, delta))
+        return capped
 
     def _flush_pending_moves(self):
         with self._move_lock:
-            if not self._pending_move_points:
+            if not self._pending_move_points or self.recording_mode != "ALL":
+                self._pending_move_points.clear()
                 return
 
             if len(self._pending_move_points) == 1:
@@ -95,7 +107,6 @@ class MacroRecorder:
                 )
                 self._emit_event(ev)
             else:
-                # Apply RDP simplification
                 simplified = rdp_simplify(self._pending_move_points, epsilon=self.path_compression_epsilon)
                 for pt in simplified:
                     ev = MacroEvent(
@@ -103,7 +114,7 @@ class MacroRecorder:
                         x=int(pt[0]),
                         y=int(pt[1]),
                         curve_type="windmouse",
-                        delay_after_ms=15.0,
+                        delay_after_ms=18.0,
                     )
                     self._emit_event(ev)
 
@@ -115,13 +126,13 @@ class MacroRecorder:
             self.on_event_recorded(ev)
 
     def _on_mouse_move(self, x, y):
-        if not self.is_recording or not self.record_mouse_moves:
+        if not self.is_recording or self.recording_mode != "ALL":
             return
         with self._move_lock:
             self._pending_move_points.append((int(x), int(y)))
 
     def _on_mouse_click(self, x, y, button, pressed):
-        if not self.is_recording:
+        if not self.is_recording or self.recording_mode == "KEYS_ONLY":
             return
 
         self._flush_pending_moves()
@@ -142,13 +153,13 @@ class MacroRecorder:
             )
             self._emit_event(ev)
         else:
-            # If previous event was MOUSE_DOWN at same location within 250ms, merge into MOUSE_CLICK
+            # Merge Down + Up into single Click if within 300ms
             if (
                 self._recorded_events
                 and self._recorded_events[-1].event_type == EventType.MOUSE_DOWN
                 and self._recorded_events[-1].button == btn_str
-                and abs(self._recorded_events[-1].x - int(x)) <= 3
-                and abs(self._recorded_events[-1].y - int(y)) <= 3
+                and abs(self._recorded_events[-1].x - int(x)) <= 4
+                and abs(self._recorded_events[-1].y - int(y)) <= 4
             ):
                 prev_down = self._recorded_events.pop()
                 click_ev = MacroEvent(
@@ -171,7 +182,7 @@ class MacroRecorder:
                 self._emit_event(ev)
 
     def _on_mouse_scroll(self, x, y, dx, dy):
-        if not self.is_recording:
+        if not self.is_recording or self.recording_mode == "KEYS_ONLY":
             return
 
         self._flush_pending_moves()
@@ -189,8 +200,12 @@ class MacroRecorder:
         if not self.is_recording:
             return
 
-        self._flush_pending_moves()
         key_name = self._format_key_name(key)
+        # Suppress control hotkeys like F8, F9, F10
+        if key_name.lower() in self.ignored_keys:
+            return
+
+        self._flush_pending_moves()
         vk = getattr(key, "vk", 0) or 0
 
         ev = MacroEvent(
@@ -205,11 +220,15 @@ class MacroRecorder:
         if not self.is_recording:
             return
 
-        self._flush_pending_moves()
         key_name = self._format_key_name(key)
+        # Suppress control hotkeys
+        if key_name.lower() in self.ignored_keys:
+            return
+
+        self._flush_pending_moves()
         vk = getattr(key, "vk", 0) or 0
 
-        # Check if we can merge KeyDown + KeyUp into KeyPress
+        # Merge Down + Up into KeyPress
         if (
             self._recorded_events
             and self._recorded_events[-1].event_type == EventType.KEY_DOWN

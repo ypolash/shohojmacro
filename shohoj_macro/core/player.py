@@ -1,11 +1,12 @@
 """
-High-Precision Playback Engine with Error Policies & Focus Lock
+High-Precision Playback Engine with Error Policies, Focus Lock & Panic Fail-Safe
 Executes recorded and handcrafted macro sequences with sub-millisecond accuracy.
 """
 
 import time
 import threading
 import random
+import math
 from typing import Callable, Optional
 from shohoj_macro.core.events import MacroEvent, EventType, ErrorPolicy
 from shohoj_macro.core.humanizer import HumanizerEngine
@@ -24,6 +25,7 @@ from shohoj_macro.utils.win32_input import (
     send_key_press,
     send_text,
     set_input_blocked,
+    get_cursor_pos,
     get_foreground_window_title,
 )
 
@@ -52,13 +54,14 @@ class MacroPlayer:
 
         self.state = PlaybackState.IDLE
         self.speed_multiplier = 1.0
-        self.total_loops = 1  # 0 or negative = Infinite
+        self.total_loops = 1
         self.inter_loop_delay_ms = 100.0
         self.inter_loop_jitter_ms = 0.0
         self.humanizer_enabled = True
         self.bio_rhythm_enabled = True
         self.block_physical_input = False
         self.foreground_lock_title = ""
+        self.corner_fail_safe = True  # Move to (0, 0) to panic abort
 
         self._events: list[MacroEvent] = []
         self._thread: Optional[threading.Thread] = None
@@ -80,7 +83,7 @@ class MacroPlayer:
 
         if not self._events:
             if self.on_log_message:
-                self.on_log_message("No events to play.", "WARN")
+                self.on_log_message("No actions in timeline to play.", "WARN")
             return
 
         self.total_loops = loops
@@ -109,7 +112,7 @@ class MacroPlayer:
 
     def stop(self):
         self._stop_requested = True
-        self._pause_event.set()  # Unblock if paused so thread can exit
+        self._pause_event.set()
         self.state = PlaybackState.STOPPED
         if self.block_physical_input:
             set_input_blocked(False)
@@ -119,6 +122,18 @@ class MacroPlayer:
 
     def is_paused(self) -> bool:
         return self.state == PlaybackState.PAUSED
+
+    def _check_panic_failsafe(self) -> bool:
+        """Returns True if user moved mouse to (0, 0) top-left corner."""
+        if not self.corner_fail_safe:
+            return False
+        cx, cy = get_cursor_pos()
+        if cx <= 2 and cy <= 2:
+            self._stop_requested = True
+            if self.on_log_message:
+                self.on_log_message("⚠️ Panic Fail-Safe Triggered! (Mouse in top-left corner)", "WARN")
+            return True
+        return False
 
     def _run_playback(self):
         success = True
@@ -135,10 +150,9 @@ class MacroPlayer:
                     loop_str = f"Loop {current_loop}/{self.total_loops}" if self.total_loops > 0 else f"Loop {current_loop} (Infinite)"
                     self.on_log_message(f"--- Starting {loop_str} ---", "INFO")
 
-                # Execute action sequence for this loop
                 step_idx = 0
                 while step_idx < len(self._events):
-                    if self._stop_requested:
+                    if self._stop_requested or self._check_panic_failsafe():
                         break
 
                     self._pause_event.wait()
@@ -159,7 +173,6 @@ class MacroPlayer:
                     if self.on_step_started:
                         self.on_step_started(step_idx, event)
 
-                    # Execute event with error policy
                     step_success = self._execute_event_with_retry(event)
 
                     if not step_success:
@@ -189,11 +202,9 @@ class MacroPlayer:
                 if self.on_loop_completed:
                     self.on_loop_completed(current_loop, self.total_loops)
 
-                # Check loop termination
                 if self.total_loops > 0 and current_loop >= self.total_loops:
                     break
 
-                # Inter-loop rest
                 if not self._stop_requested and self.inter_loop_delay_ms > 0:
                     jitter = random.uniform(-self.inter_loop_jitter_ms, self.inter_loop_jitter_ms)
                     rest_sec = max(0.01, (self.inter_loop_delay_ms + jitter) / 1000.0)
@@ -237,7 +248,7 @@ class MacroPlayer:
                     event.y,
                     duration_ms=event.duration_ms / effective_speed,
                     curve_type=event.curve_type,
-                    cancel_check_fn=lambda: self._stop_requested,
+                    cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
                 )
             else:
                 from shohoj_macro.utils.win32_input import send_mouse_move
@@ -251,10 +262,17 @@ class MacroPlayer:
                     event.x, event.y, event.human_target_radius
                 )
 
-            # Move to target first if not already there
-            HumanizerEngine.move_humanized(
-                target_x, target_y, duration_ms=140.0 / effective_speed, curve_type="windmouse", cancel_check_fn=lambda: self._stop_requested
-            )
+            # Move to target only if cursor is not already there
+            cur_x, cur_y = get_cursor_pos()
+            if math.hypot(target_x - cur_x, target_y - cur_y) > 3.0:
+                if self.humanizer_enabled:
+                    HumanizerEngine.move_humanized(
+                        target_x, target_y, duration_ms=120.0 / effective_speed, curve_type="windmouse", cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe()
+                    )
+                else:
+                    from shohoj_macro.utils.win32_input import send_mouse_move
+                    send_mouse_move(target_x, target_y)
+
             hold_ms = StealthCore.calculate_human_click_hold_ms() if self.humanizer_enabled else 45.0
             send_mouse_click(event.button, hold_ms=hold_ms)
             if event.click_count == 2:
@@ -268,15 +286,14 @@ class MacroPlayer:
             send_mouse_up(event.button, event.x, event.y)
 
         elif t == EventType.MOUSE_DRAG:
-            # Move to start, mouse down, smooth drag to end, mouse up
             from shohoj_macro.utils.win32_input import send_mouse_move
             send_mouse_move(event.x, event.y)
             send_mouse_down(event.button)
-            time.sleep(0.05)
+            time.sleep(0.04)
             HumanizerEngine.move_humanized(
-                event.end_x, event.end_y, duration_ms=event.duration_ms / effective_speed, curve_type="bezier", cancel_check_fn=lambda: self._stop_requested
+                event.end_x, event.end_y, duration_ms=event.duration_ms / effective_speed, curve_type="bezier", cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe()
             )
-            time.sleep(0.05)
+            time.sleep(0.04)
             send_mouse_up(event.button)
 
         elif t == EventType.MOUSE_SCROLL:
@@ -307,14 +324,14 @@ class MacroPlayer:
                 radius=event.zone_radius,
                 duration_ms=event.duration_ms / effective_speed,
                 return_to_origin=event.return_to_origin,
-                cancel_check_fn=lambda: self._stop_requested,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
             )
 
         elif t == EventType.HUMAN_SCROLL_PEEK:
             HumanizerEngine.perform_human_scroll_peek(
                 scroll_notches=event.scroll_dy,
                 peek_duration_ms=event.peek_duration_ms / effective_speed,
-                cancel_check_fn=lambda: self._stop_requested,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
             )
 
         elif t == EventType.PIXEL_CHECK:
@@ -324,7 +341,7 @@ class MacroPlayer:
                 event.target_hex_color,
                 tolerance=event.color_tolerance,
                 timeout_ms=event.timeout_ms,
-                cancel_check_fn=lambda: self._stop_requested,
+                cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
             )
             if not matched:
                 raise TimeoutError(f"Pixel check at ({event.x}, {event.y}) failed to match {event.target_hex_color}")

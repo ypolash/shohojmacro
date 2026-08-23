@@ -1,6 +1,6 @@
 """
-Humanizer Physics Engine: WindMouse, Bézier Splines, Gaussian Click Scatter & Scroll-Peek
-Generates lifelike human mouse kinematics indistinguishable from manual usage.
+Humanizer Physics Engine: Minimum-Jerk Splines, Smooth Bézier Curves & Gaussian Area Dispersion
+Generates fluid, lifelike human mouse kinematics without erratic or violent cursor shaking.
 """
 
 import math
@@ -16,37 +16,48 @@ from shohoj_macro.core.stealth_core import StealthCore
 
 
 class HumanizerEngine:
-    """Physics-based trajectory and auxiliary behavior generator."""
+    """Physics-based human kinematics and organic trajectory generator."""
 
     @staticmethod
     def sample_gaussian_point_in_circle(center_x: int, center_y: int, radius: int) -> tuple[int, int]:
         """
         Samples a 2D coordinate inside a circle of radius R with 2D Gaussian density (sigma = R/3).
-        Clicks naturally cluster near the center just like real human finger taps.
+        Clicks cluster naturally near the center without robotic uniformity.
         """
         if radius <= 0:
             return center_x, center_y
 
         sigma = radius / 3.0
-        # Box-Muller transform for 2D Gaussian
+        # Box-Muller transform
         dx = random.gauss(0, sigma)
         dy = random.gauss(0, sigma)
         dist = math.hypot(dx, dy)
 
         if dist > radius:
-            # Clamp to boundary if beyond radius
-            scale = radius / dist
+            scale = (radius - 0.5) / dist
             dx *= scale
             dy *= scale
 
-        return int(round(center_x + dx)), int(round(center_y + dy))
+        px = int(round(center_x + dx))
+        py = int(round(center_y + dy))
+
+        # Ensure integer rounding stays strictly within radius
+        int_dist = math.hypot(px - center_x, py - center_y)
+        if int_dist > radius and radius > 0:
+            scale = (radius - 0.5) / int_dist
+            px = int(round(center_x + (px - center_x) * scale))
+            py = int(round(center_y + (py - center_y) * scale))
+
+        return px, py
 
     @staticmethod
-    def generate_bezier_trajectory(
-        start_x: int, start_y: int, end_x: int, end_y: int, num_steps: int = 60
+    def generate_smooth_trajectory(
+        start_x: int, start_y: int, end_x: int, end_y: int, num_steps: int = 50
     ) -> list[tuple[int, int]]:
         """
-        Generates a Cubic Bézier curve with randomized control points and Fitts's law velocity easing.
+        Generates a smooth, natural human trajectory using a Quintic Minimum-Jerk curve
+        with gentle organic curvature and realistic deceleration.
+        Zero chaotic shaking or high-frequency oscillation.
         """
         if start_x == end_x and start_y == end_y:
             return [(start_x, start_y)]
@@ -55,127 +66,90 @@ class HumanizerEngine:
         dy = end_y - start_y
         dist = math.hypot(dx, dy)
 
-        # Generate control points offset perpendicular to trajectory
-        perp_x = -dy / (dist + 0.001)
-        perp_y = dx / (dist + 0.001)
+        if dist <= 3.0:
+            return [(start_x, start_y), (end_x, end_y)]
 
-        offset_scale = min(120.0, dist * 0.35)
-        offset1 = random.uniform(-offset_scale, offset_scale)
-        offset2 = random.uniform(-offset_scale, offset_scale)
+        # Perpendicular normal vector for natural hand arc
+        perp_x = -dy / dist
+        perp_y = dx / dist
 
-        p0 = (float(start_x), float(start_y))
-        p1 = (
-            start_x + dx * 0.33 + perp_x * offset1,
-            start_y + dy * 0.33 + perp_y * offset1,
-        )
-        p2 = (
-            start_x + dx * 0.66 + perp_x * offset2,
-            start_y + dy * 0.66 + perp_y * offset2,
-        )
-        p3 = (float(end_x), float(end_y))
+        # Gentle curvature offset (max 35px or 18% of distance)
+        arc_offset = min(35.0, dist * 0.18) * random.uniform(-0.8, 0.8)
+
+        # Control point for smooth quadratic/cubic curve
+        mid_x = (start_x + end_x) / 2.0 + perp_x * arc_offset
+        mid_y = (start_y + end_y) / 2.0 + perp_y * arc_offset
 
         points = []
-        for i in range(num_steps + 1):
-            # Fitts's Law easing (slow start, fast middle, slow end)
-            t_linear = i / float(num_steps)
-            # Smoothstep curve: 3t^2 - 2t^3
-            t = t_linear * t_linear * (3.0 - 2.0 * t_linear)
+        # Dynamic step count based on distance
+        steps = max(15, min(num_steps, int(dist / 5.0)))
 
-            # Cubic Bezier formula
+        for i in range(steps + 1):
+            t_linear = i / float(steps)
+            # Quintic Minimum-Jerk polynomial easing: 10t^3 - 15t^4 + 6t^5
+            # Produces zero acceleration at endpoints and peak smooth velocity in middle
+            t = t_linear * t_linear * t_linear * (10.0 - 15.0 * t_linear + 6.0 * t_linear * t_linear)
+
+            # Quadratic Bezier formulation
             omt = 1.0 - t
-            bx = omt**3 * p0[0] + 3 * omt**2 * t * p1[0] + 3 * omt * t**2 * p2[0] + t**3 * p3[0]
-            by = omt**3 * p0[1] + 3 * omt**2 * t * p1[1] + 3 * omt * t**2 * p2[1] + t**3 * p3[1]
+            bx = omt * omt * start_x + 2.0 * omt * t * mid_x + t * t * end_x
+            by = omt * omt * start_y + 2.0 * omt * t * mid_y + t * t * end_y
 
-            # Add subtle sub-pixel micro-tremor
-            jitter_x = random.uniform(-0.6, 0.6)
-            jitter_y = random.uniform(-0.6, 0.6)
+            # Micro-tremor (gentle low-pass noise: max 0.35px)
+            if 0 < i < steps:
+                jitter_factor = math.sin(t_linear * math.pi) * 0.35
+                jitter_x = random.uniform(-jitter_factor, jitter_factor)
+                jitter_y = random.uniform(-jitter_factor, jitter_factor)
+            else:
+                jitter_x, jitter_y = 0.0, 0.0
 
             points.append((int(round(bx + jitter_x)), int(round(by + jitter_y))))
 
         points[-1] = (end_x, end_y)
         return points
 
-    @staticmethod
+    @classmethod
     def generate_windmouse_trajectory(
-        start_x: int,
-        start_y: int,
-        dest_x: int,
-        dest_y: int,
-        gravity: float = 9.0,
-        wind: float = 3.0,
-        min_wait: float = 2.0,
-        max_wait: float = 4.0,
-        max_step: float = 12.0,
-        target_area: float = 3.0,
+        cls, start_x: int, start_y: int, dest_x: int, dest_y: int, **kwargs
     ) -> list[tuple[int, int]]:
         """
-        WindMouse algorithm: models natural human hand physics (gravity pull, wind resistance,
-        mass inertia, and random muscle tremors).
+        WindMouse trajectory wrapper utilizing stable smooth curvature.
+        Guarantees smooth glide without chaotic oscillations.
         """
-        current_x = float(start_x)
-        current_y = float(start_y)
-        v_x = 0.0
-        v_y = 0.0
-        w_x = 0.0
-        w_y = 0.0
-
-        points = [(start_x, start_y)]
         dist = math.hypot(dest_x - start_x, dest_y - start_y)
+        steps = max(20, min(100, int(dist / 6.0)))
+        return cls.generate_smooth_trajectory(start_x, start_y, dest_x, dest_y, num_steps=steps)
 
-        while dist > 1.0:
-            wind = min(wind, dist)
-            if dist >= target_area:
-                w_x = w_x / math.sqrt(3) + (random.random() * (wind * 2 + 1) - wind) / math.sqrt(5)
-                w_y = w_y / math.sqrt(3) + (random.random() * (wind * 2 + 1) - wind) / math.sqrt(5)
-            else:
-                w_x /= math.sqrt(3)
-                w_y /= math.sqrt(3)
-                if max_step < 3:
-                    max_step = random.random() * 3 + 3.0
-                else:
-                    max_step /= math.sqrt(5)
-
-            v_x += w_x + gravity * (dest_x - current_x) / dist
-            v_y += w_y + gravity * (dest_y - current_y) / dist
-
-            vel_mag = math.hypot(v_x, v_y)
-            if vel_mag > max_step:
-                random_dist = max_step / 2.0 + random.random() * (max_step / 2.0)
-                v_x = (v_x / vel_mag) * random_dist
-                v_y = (v_y / vel_mag) * random_dist
-
-            current_x += v_x
-            current_y += v_y
-            points.append((int(round(current_x)), int(round(current_y))))
-
-            dist = math.hypot(dest_x - current_x, dest_y - current_y)
-            if len(points) > 1000:  # Safety cap
-                break
-
-        points.append((dest_x, dest_y))
-        return points
+    @classmethod
+    def generate_bezier_trajectory(
+        cls, start_x: int, start_y: int, end_x: int, end_y: int, num_steps: int = 50
+    ) -> list[tuple[int, int]]:
+        return cls.generate_smooth_trajectory(start_x, start_y, end_x, end_y, num_steps=num_steps)
 
     @classmethod
     def move_humanized(
         cls,
         dest_x: int,
         dest_y: int,
-        duration_ms: float = 280.0,
+        duration_ms: float = 240.0,
         curve_type: str = "windmouse",
         cancel_check_fn=None,
     ):
-        """Moves cursor from current position to (dest_x, dest_y) with chosen human curve."""
+        """Moves cursor from current position to (dest_x, dest_y) in a fluid, natural arc."""
         start_x, start_y = get_cursor_pos()
         if start_x == dest_x and start_y == dest_y:
             return
 
         dist = math.hypot(dest_x - start_x, dest_y - start_y)
-        # Adapt step count to distance
-        steps = max(20, min(140, int(dist / 6.0)))
+        if dist < 3.0:
+            send_mouse_move(dest_x, dest_y)
+            return
 
-        if curve_type == "bezier":
-            trajectory = cls.generate_bezier_trajectory(start_x, start_y, dest_x, dest_y, steps)
+        if curve_type == "instant":
+            send_mouse_move(dest_x, dest_y)
+            return
         elif curve_type == "linear":
+            steps = max(10, int(dist / 8.0))
             trajectory = [
                 (
                     int(round(start_x + (dest_x - start_x) * (i / float(steps)))),
@@ -183,16 +157,13 @@ class HumanizerEngine:
                 )
                 for i in range(steps + 1)
             ]
-        elif curve_type == "instant":
-            send_mouse_move(dest_x, dest_y)
-            return
-        else:  # Default WindMouse
-            trajectory = cls.generate_windmouse_trajectory(start_x, start_y, dest_x, dest_y)
+        else:
+            trajectory = cls.generate_smooth_trajectory(start_x, start_y, dest_x, dest_y)
 
         StealthCore.stream_trajectory_points(
             trajectory,
             total_duration_ms=duration_ms,
-            hz_rate=350,
+            hz_rate=300,
             cancel_check_fn=cancel_check_fn,
         )
 
@@ -206,7 +177,7 @@ class HumanizerEngine:
         return_to_origin: bool = True,
         cancel_check_fn=None,
     ):
-        """Simulates human hand resting/wobbling inside a designated circle."""
+        """Simulates human hand gently resting/hovering inside a designated circle."""
         start_x, start_y = get_cursor_pos()
         end_time = time.perf_counter() + (duration_ms / 1000.0)
 
@@ -215,9 +186,9 @@ class HumanizerEngine:
                 break
 
             target_x, target_y = cls.sample_gaussian_point_in_circle(center_x, center_y, radius)
-            move_time = random.uniform(120.0, 240.0)
+            move_time = random.uniform(140.0, 260.0)
             cls.move_humanized(target_x, target_y, duration_ms=move_time, curve_type="windmouse", cancel_check_fn=cancel_check_fn)
-            idle_pause = random.uniform(0.08, 0.22)
+            idle_pause = random.uniform(0.12, 0.28)
             hires_sleep(idle_pause)
 
         if return_to_origin and not (cancel_check_fn and cancel_check_fn()):
@@ -231,9 +202,7 @@ class HumanizerEngine:
         cancel_check_fn=None,
     ):
         """
-        Non-clashing simulated browsing scroll:
-        Smoothly scrolls down, pauses for reading, and scrolls back the exact opposite delta (-scroll_notches).
-        Guarantees zero net displacement for subsequent macro clicks.
+        Non-clashing simulated browsing scroll with exact zero net displacement.
         """
         if scroll_notches == 0:
             return
@@ -241,15 +210,15 @@ class HumanizerEngine:
         direction = 1 if scroll_notches > 0 else -1
         total_steps = abs(scroll_notches)
 
-        # Step 1: Smooth human scroll down with easing
+        # 1. Smooth human scroll down with easing
         for step in range(total_steps):
             if cancel_check_fn and cancel_check_fn():
                 return
             send_mouse_scroll(dy=direction)
-            pause = random.uniform(0.04, 0.12)
+            pause = random.uniform(0.05, 0.12)
             hires_sleep(pause)
 
-        # Step 2: Reading pause
+        # 2. Reading pause
         glance_time = peek_duration_ms / 1000.0
         start_glance = time.perf_counter()
         while time.perf_counter() - start_glance < glance_time:
@@ -257,11 +226,11 @@ class HumanizerEngine:
                 return
             hires_sleep(0.05)
 
-        # Step 3: Exact reverse scroll back (Net Zero Displacement)
+        # 3. Exact reverse scroll back
         reverse_direction = -direction
         for step in range(total_steps):
             if cancel_check_fn and cancel_check_fn():
                 return
             send_mouse_scroll(dy=reverse_direction)
-            pause = random.uniform(0.03, 0.09)
+            pause = random.uniform(0.04, 0.09)
             hires_sleep(pause)

@@ -4,12 +4,14 @@ Developed by Polash Khan (ypolash2)
 """
 
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
+import winsound
 from datetime import datetime
 
-from shohoj_macro.gui.glass_theme import GlassTheme, GlassCard, GlassButton
+from shohoj_macro.gui.glass_theme import GlassTheme, GlassCard, GlassButton, GlassTooltip
 from shohoj_macro.gui.timeline_table import TimelineTableEditor
 from shohoj_macro.gui.trajectory_canvas import TrajectoryCanvas
 from shohoj_macro.gui.playback_log import PlaybackLogPanel
@@ -40,8 +42,8 @@ class ShohojMacroStudio(ctk.CTk):
         GlassTheme.apply_global_settings()
 
         self.title(f"{__app_name__} v{__version__} • Studio")
-        self.geometry("1180x720")
-        self.minsize(980, 620)
+        self.geometry("1200x740")
+        self.minsize(1020, 640)
         self.configure(fg_color=GlassTheme.BG_DARK)
 
         # Core Engines
@@ -69,10 +71,15 @@ class ShohojMacroStudio(ctk.CTk):
             "humanizer_enabled": True,
             "bio_rhythm_enabled": True,
             "block_physical_input": False,
+            "audio_cues_enabled": True,
+            "auto_popup_hud": True,
+            "countdown_enabled": False,
         }
 
         # HUD Window instance
         self.hud_window = None
+        self._record_start_time = None
+        self._record_timer_id = None
 
         # Build UI Structure
         self._build_top_ribbon()
@@ -87,6 +94,22 @@ class ShohojMacroStudio(ctk.CTk):
         self.log_panel.log(f"Welcome to {__app_name__} v{__version__} by {__author__} ({__username__})", "SUCCESS")
         self.log_panel.log("Global Hotkeys Active: F8 (Record), F9 (Play/Pause), F10 (Emergency Stop)", "INFO")
 
+    def _play_sound(self, sound_type="info"):
+        """Plays subtle Windows audio feedback."""
+        if not self.settings.get("audio_cues_enabled", True):
+            return
+        try:
+            if sound_type == "record_start":
+                winsound.Beep(880, 120)
+            elif sound_type == "record_stop":
+                winsound.Beep(587, 140)
+            elif sound_type == "play_start":
+                winsound.Beep(1046, 120)
+            elif sound_type == "stop":
+                winsound.Beep(440, 180)
+        except Exception:
+            pass
+
     def _build_top_ribbon(self):
         self.ribbon = GlassCard(self, height=58, corner_radius=12)
         self.ribbon.pack(fill="x", padx=14, pady=(12, 6))
@@ -98,7 +121,7 @@ class ShohojMacroStudio(ctk.CTk):
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=15, weight="bold"),
             text_color=GlassTheme.ACCENT_CYAN,
         )
-        lbl_logo.pack(side="left", padx=(14, 16))
+        lbl_logo.pack(side="left", padx=(14, 14))
 
         # Record Button
         self.btn_record = ctk.CTkButton(
@@ -106,14 +129,15 @@ class ShohojMacroStudio(ctk.CTk):
             text="● Record (F8)",
             width=105,
             height=32,
-            corner_radius=10,
+            corner_radius=8,
             fg_color="#3A181C",
             hover_color=GlassTheme.ACCENT_RED,
             text_color=GlassTheme.ACCENT_RED,
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
             command=self._toggle_record,
         )
-        self.btn_record.pack(side="left", padx=4)
+        self.btn_record.pack(side="left", padx=3)
+        GlassTooltip(self.btn_record, "Start or stop global action recording (F8)")
 
         # Play Button
         self.btn_play = ctk.CTkButton(
@@ -121,14 +145,15 @@ class ShohojMacroStudio(ctk.CTk):
             text="▶ Play (F9)",
             width=95,
             height=32,
-            corner_radius=10,
+            corner_radius=8,
             fg_color="#143A22",
             hover_color=GlassTheme.ACCENT_EMERALD,
             text_color=GlassTheme.ACCENT_EMERALD,
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
             command=self._toggle_play,
         )
-        self.btn_play.pack(side="left", padx=4)
+        self.btn_play.pack(side="left", padx=3)
+        GlassTooltip(self.btn_play, "Play or pause current macro sequence (F9)")
 
         # Stop Button
         self.btn_stop = ctk.CTkButton(
@@ -136,30 +161,46 @@ class ShohojMacroStudio(ctk.CTk):
             text="⏹ Stop (F10)",
             width=95,
             height=32,
-            corner_radius=10,
+            corner_radius=8,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color="#333A4D",
             font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
             command=self._stop_all,
         )
-        self.btn_stop.pack(side="left", padx=4)
+        self.btn_stop.pack(side="left", padx=3)
+        GlassTooltip(self.btn_stop, "Emergency kill switch / abort playback (F10)")
 
         # Separator
-        ctk.CTkLabel(self.ribbon, text="|", text_color=GlassTheme.CARD_BORDER).pack(side="left", padx=8)
+        ctk.CTkLabel(self.ribbon, text="|", text_color=GlassTheme.CARD_BORDER).pack(side="left", padx=6)
+
+        # Recording Mode Option
+        ctk.CTkLabel(self.ribbon, text="Mode:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
+        self.opt_rec_mode = ctk.CTkOptionMenu(
+            self.ribbon,
+            values=["All Motion", "Clicks & Keys (Clean)", "Keys Only"],
+            width=135,
+            height=28,
+            font=ctk.CTkFont(size=10),
+            command=self._on_rec_mode_changed,
+        )
+        self.opt_rec_mode.set("Clicks & Keys (Clean)")
+        self.opt_rec_mode.pack(side="left", padx=(0, 6))
+        GlassTooltip(self.opt_rec_mode, "Select input recording granularity")
 
         # Loops input
-        ctk.CTkLabel(self.ribbon, text="Loops:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 4))
-        self.ent_loops = ctk.CTkEntry(self.ribbon, width=44, height=28)
+        ctk.CTkLabel(self.ribbon, text="Loops:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
+        self.ent_loops = ctk.CTkEntry(self.ribbon, width=42, height=28)
         self.ent_loops.insert(0, "1")
-        self.ent_loops.pack(side="left", padx=(0, 8))
+        self.ent_loops.pack(side="left", padx=(0, 6))
+        GlassTooltip(self.ent_loops, "Number of repetitions (1 = once, 0 = infinite)")
 
         # Speed Slider
-        ctk.CTkLabel(self.ribbon, text="Speed:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 4))
-        self.speed_slider = ctk.CTkSlider(self.ribbon, from_=0.2, to=3.0, number_of_steps=28, width=85, command=self._on_speed_changed)
+        ctk.CTkLabel(self.ribbon, text="Speed:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
+        self.speed_slider = ctk.CTkSlider(self.ribbon, from_=0.2, to=3.0, number_of_steps=28, width=75, command=self._on_speed_changed)
         self.speed_slider.set(1.0)
         self.speed_slider.pack(side="left", padx=(0, 2))
-        self.lbl_speed_val = ctk.CTkLabel(self.ribbon, text="1.0x", font=ctk.CTkFont(size=10, weight="bold"), text_color=GlassTheme.TEXT_PRIMARY, width=32)
-        self.lbl_speed_val.pack(side="left", padx=(0, 8))
+        self.lbl_speed_val = ctk.CTkLabel(self.ribbon, text="1.0x", font=ctk.CTkFont(size=10, weight="bold"), text_color=GlassTheme.TEXT_PRIMARY, width=28)
+        self.lbl_speed_val.pack(side="left", padx=(0, 6))
 
         # Humanizer Toggle Switch
         self.switch_humanizer = ctk.CTkSwitch(
@@ -171,67 +212,73 @@ class ShohojMacroStudio(ctk.CTk):
         )
         self.switch_humanizer.select()
         self.switch_humanizer.pack(side="left", padx=4)
+        GlassTooltip(self.switch_humanizer, "Toggle natural smooth Minimum-Jerk trajectories and Gaussian click scatter")
 
         # Right Side Tools
         self.btn_about = ctk.CTkButton(
             self.ribbon,
             text="ℹ️",
-            width=32,
-            height=30,
-            corner_radius=8,
+            width=30,
+            height=28,
+            corner_radius=6,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color="#333A4D",
             command=lambda: AboutDialog(self),
         )
         self.btn_about.pack(side="right", padx=(2, 10))
+        GlassTooltip(self.btn_about, "About Shohoj Macro & Developer Credits")
 
         self.btn_settings = ctk.CTkButton(
             self.ribbon,
             text="⚙️",
-            width=32,
-            height=30,
-            corner_radius=8,
+            width=30,
+            height=28,
+            corner_radius=6,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color="#333A4D",
             command=self._open_settings,
         )
         self.btn_settings.pack(side="right", padx=2)
+        GlassTooltip(self.btn_settings, "Preferences, Hotkeys & Fail-safe Settings")
 
         self.btn_export = ctk.CTkButton(
             self.ribbon,
             text="📤 Export",
             width=68,
-            height=30,
-            corner_radius=8,
+            height=28,
+            corner_radius=6,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color=GlassTheme.ACCENT_BLUE,
             command=self._open_export,
         )
         self.btn_export.pack(side="right", padx=2)
+        GlassTooltip(self.btn_export, "Export macro to standalone Python (.py) or AutoHotkey (.ahk)")
 
         self.btn_hud = ctk.CTkButton(
             self.ribbon,
             text="🏝️ Mini HUD",
-            width=85,
-            height=30,
-            corner_radius=8,
+            width=80,
+            height=28,
+            corner_radius=6,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color=GlassTheme.ACCENT_CYAN,
             command=self._toggle_dynamic_island,
         )
         self.btn_hud.pack(side="right", padx=2)
+        GlassTooltip(self.btn_hud, "Toggle floating top-screen Dynamic Island HUD widget")
 
         self.btn_save = ctk.CTkButton(
             self.ribbon,
             text="💾 Save",
             width=60,
-            height=30,
-            corner_radius=8,
+            height=28,
+            corner_radius=6,
             fg_color=GlassTheme.CARD_BG_SECONDARY,
             hover_color="#333A4D",
             command=self._save_macro,
         )
         self.btn_save.pack(side="right", padx=2)
+        GlassTooltip(self.btn_save, "Save macro sequence to .shj file")
 
     def _build_main_layout(self):
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -294,10 +341,30 @@ class ShohojMacroStudio(ctk.CTk):
     def _on_speed_changed(self, value):
         self.lbl_speed_val.configure(text=f"{value:.1f}x")
 
+    def _on_rec_mode_changed(self, choice):
+        if "Clean" in choice:
+            self.recorder.recording_mode = "CLICKS_AND_KEYS"
+        elif "Keys" in choice:
+            self.recorder.recording_mode = "KEYS_ONLY"
+        else:
+            self.recorder.recording_mode = "ALL"
+        self.log_panel.log(f"Recording Mode: {self.recorder.recording_mode}", "INFO")
+
     def _on_humanizer_toggle(self):
         enabled = bool(self.switch_humanizer.get())
         self.player.humanizer_enabled = enabled
         self.log_panel.log(f"Humanizer Physics {'Enabled' if enabled else 'Disabled'}", "INFO")
+
+    def _show_hud_auto(self):
+        """Automatically spawns HUD if enabled in settings."""
+        if self.settings.get("auto_popup_hud", True):
+            if not self.hud_window or not self.hud_window.winfo_exists():
+                self.hud_window = DynamicIslandHUD(
+                    self,
+                    on_toggle_record=self._toggle_record,
+                    on_toggle_play=self._toggle_play,
+                    on_stop=self._stop_all,
+                )
 
     def _toggle_record(self):
         if self.recorder.is_recording:
@@ -305,19 +372,32 @@ class ShohojMacroStudio(ctk.CTk):
             self.timeline.set_events(events)
             self.trajectory_canvas.update_trajectory(events)
             self.btn_record.configure(text="● Record (F8)", fg_color="#3A181C", text_color=GlassTheme.ACCENT_RED)
-            self.lbl_status.configure(text=f"Recording stopped. Captured {len(events)} actions.")
+            self.lbl_status.configure(text=f"Recording stopped. Total {len(events)} actions captured.")
             self.log_panel.log(f"Recording stopped ({len(events)} events captured).", "SUCCESS")
+            self._play_sound("record_stop")
             if self.hud_window:
                 self.hud_window.update_status("IDLE")
         else:
             if self.player.is_playing():
                 self.player.stop()
-            self.recorder.start(record_moves=True)
-            self.btn_record.configure(text="⏹ Stop Rec", fg_color=GlassTheme.ACCENT_RED, text_color="#FFFFFF")
-            self.lbl_status.configure(text="● Recording inputs... Press F8 to Stop.")
-            self.log_panel.log("Recording started... Move, click or type.", "INFO")
+
+            # Clear timeline for fresh recording
+            self.timeline.set_events([])
+            self.trajectory_canvas.update_trajectory([])
+
+            # Determine mode
+            mode_choice = self.opt_rec_mode.get()
+            rec_mode = "CLICKS_AND_KEYS" if "Clean" in mode_choice else ("KEYS_ONLY" if "Keys" in mode_choice else "ALL")
+
+            self.recorder.start(mode=rec_mode)
+            self.btn_record.configure(text="⏹ Stop Rec (F8)", fg_color=GlassTheme.ACCENT_RED, text_color="#FFFFFF")
+            self.lbl_status.configure(text="● Recording inputs live... Press F8 to Stop.")
+            self.log_panel.log(f"Recording started ({rec_mode}). Move, click or type...", "INFO")
+            self._play_sound("record_start")
+
+            self._show_hud_auto()
             if self.hud_window:
-                self.hud_window.update_status("RECORDING", "00:00")
+                self.hud_window.update_status("RECORDING", "00:00", count=0)
 
     def _toggle_play(self):
         if self.player.is_playing():
@@ -347,6 +427,9 @@ class ShohojMacroStudio(ctk.CTk):
             self.player.play(events, loops=loops, speed=speed)
             self.btn_play.configure(text="⏸ Pause (F9)", fg_color="#3A2814", text_color=GlassTheme.ACCENT_ORANGE)
             self.lbl_status.configure(text=f"Playing macro ({loops} loops at {speed:.1f}x speed)...")
+            self._play_sound("play_start")
+
+            self._show_hud_auto()
             if self.hud_window:
                 self.hud_window.update_status("PLAYING", f"Loop 1/{loops}")
 
@@ -358,6 +441,7 @@ class ShohojMacroStudio(ctk.CTk):
             self.btn_play.configure(text="▶ Play (F9)", fg_color="#143A22", text_color=GlassTheme.ACCENT_EMERALD)
             self.lbl_status.configure(text="Playback Stopped.")
             self.log_panel.log("Playback terminated by user.", "WARN")
+            self._play_sound("stop")
             if self.hud_window:
                 self.hud_window.update_status("IDLE")
 
@@ -371,8 +455,16 @@ class ShohojMacroStudio(ctk.CTk):
         self.after(0, self._stop_all)
 
     def _on_event_recorded(self, ev: MacroEvent):
-        # Update timeline in real-time if necessary
-        pass
+        """Live event callback from Recorder thread."""
+        def _add_live():
+            self.timeline.append_event_live(ev)
+            self.trajectory_canvas.update_trajectory(self.timeline.get_events())
+            count = len(self.timeline.get_events())
+            self.lbl_status.configure(text=f"● Recording... [{count} actions captured]")
+            if self.hud_window:
+                self.hud_window.update_status("RECORDING", count=count)
+
+        self.after(0, _add_live)
 
     def _on_step_started(self, step_idx: int, ev: MacroEvent):
         self.after(0, lambda: self.timeline.highlight_step(step_idx))
@@ -390,9 +482,11 @@ class ShohojMacroStudio(ctk.CTk):
             if success:
                 self.lbl_status.configure(text="Playback completed successfully.")
                 self.log_panel.log("Playback finished successfully.", "SUCCESS")
+                self._play_sound("record_stop")
             else:
                 self.lbl_status.configure(text=f"Playback aborted: {err}")
                 self.log_panel.log(f"Playback failed: {err}", "ERROR")
+                self._play_sound("stop")
             if self.hud_window:
                 self.hud_window.update_status("IDLE")
 
@@ -434,14 +528,12 @@ class ShohojMacroStudio(ctk.CTk):
                 event_type=EventType.MOUSE_CLICK,
                 x=screen_x,
                 y=screen_y,
-                human_target_radius=12,
+                human_target_radius=10,
                 comment=f"Web: {desc}",
-                delay_after_ms=250,
+                delay_after_ms=200,
             )
-            evs = self.timeline.get_events()
-            evs.append(ev)
-            self.timeline.set_events(evs)
-            self.trajectory_canvas.update_trajectory(evs)
+            self.timeline.append_event_live(ev)
+            self.trajectory_canvas.update_trajectory(self.timeline.get_events())
             self.log_panel.log(f"Captured Web Element: '{desc}' at ({screen_x}, {screen_y})", "SUCCESS")
 
         self.after(0, _add)
@@ -452,7 +544,7 @@ class ShohojMacroStudio(ctk.CTk):
     def _save_macro(self):
         events = self.timeline.get_events()
         if not events:
-            messagebox.showwarning("Empty", "No actions to save.")
+            messagebox.showwarning("Empty", "No actions in timeline to save.")
             return
 
         default_dir = MacroStorage.get_default_library_dir()
@@ -483,6 +575,7 @@ class ShohojMacroStudio(ctk.CTk):
             self.player.bio_rhythm_enabled = s["bio_rhythm_enabled"]
             self.player.block_physical_input = s["block_physical_input"]
             self.hotkeys.update_hotkeys(s["record_hotkey"], s["play_hotkey"], s["stop_hotkey"])
+            self.recorder.set_ignored_keys([s["record_hotkey"], s["play_hotkey"], s["stop_hotkey"]])
             self.log_panel.log("Settings updated successfully.", "SUCCESS")
 
         SettingsDialog(self, self.settings, on_save)
