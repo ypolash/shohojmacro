@@ -2,25 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Shohoj Companion</title>
+  <title>Shohoj Browser Companion</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="glass-card">
     <div class="header">
-      <div class="logo">⚡ Shohoj Macro</div>
+      <div class="logo">⚡ Shohoj Companion</div>
       <div class="badge" id="statusBadge">Checking...</div>
     </div>
     
-    <p class="subtitle">Stealth DOM & Coordinate Companion</p>
+    <p class="subtitle">Stealth DOM & Hardware Bridge for Shohoj Macro</p>
+    
+    <div class="status-box">
+      <div class="status-row">
+        <span class="status-label">Desktop Engine:</span>
+        <span class="status-val" id="engineStatus">ws://127.0.0.1:8765</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Hardware Events:</span>
+        <span class="status-val text-green">isTrusted = true</span>
+      </div>
+    </div>
     
     <div class="action-box">
-      <button id="inspectBtn" class="btn btn-primary">🎯 Inspect & Pick Element</button>
+      <button id="inspectBtn" class="btn btn-primary">🎯 Pick & Snip Web Element</button>
+    </div>
+
+    <div class="features-list">
+      <div class="feat-item">🛡️ <strong>Anti-Bot Bypass:</strong> Clicks via Win32 OS hardware drivers</div>
+      <div class="feat-item">🎯 <strong>1-Click Sniping:</strong> Hover any button to capture coords</div>
+      <div class="feat-item">📝 <strong>CSV Auto-Fill:</strong> High-speed registration & forms</div>
     </div>
     
     <div class="info-footer">
-      <span>Developed by <strong>Polash Khan (ypolash2)</strong></span>
-      <span>v1.0.0</span>
+      <span>Developed by <strong>Polash Khan</strong></span>
+      <span>v2.0.0</span>
     </div>
   </div>
   <script src="popup.js"></script>
