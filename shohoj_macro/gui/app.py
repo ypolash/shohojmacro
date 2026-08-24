@@ -409,15 +409,28 @@ class ShohojMacroStudio(ctk.CTk):
         self.player.humanizer_enabled = enabled
         self.log_panel.log(f"Humanizer Kinematics {'Enabled' if enabled else 'Disabled'}", "INFO")
 
+    def _on_hud_closed(self):
+        self.hud_window = None
+
     def _show_hud_auto(self):
         if self.settings.get("auto_popup_hud", True):
-            if not self.hud_window or not self.hud_window.winfo_exists():
-                self.hud_window = DynamicIslandHUD(
-                    self,
-                    on_toggle_record=self._toggle_record,
-                    on_toggle_play=self._toggle_play,
-                    on_stop=self._stop_all,
-                )
+            is_open = False
+            if self.hud_window is not None:
+                try:
+                    is_open = bool(self.hud_window.winfo_exists())
+                except Exception:
+                    is_open = False
+            if not is_open:
+                try:
+                    self.hud_window = DynamicIslandHUD(
+                        self,
+                        on_toggle_record=self._toggle_record,
+                        on_toggle_play=self._toggle_play,
+                        on_stop=self._stop_all,
+                        on_close=self._on_hud_closed,
+                    )
+                except Exception:
+                    self.hud_window = None
 
     def _toggle_record(self):
         if self.recorder.is_recording:
@@ -554,16 +567,31 @@ class ShohojMacroStudio(ctk.CTk):
         self.trajectory_canvas.update_trajectory(events, idx)
 
     def _toggle_dynamic_island(self):
-        if self.hud_window and self.hud_window.winfo_exists():
-            self.hud_window.destroy()
+        is_open = False
+        if self.hud_window is not None:
+            try:
+                is_open = bool(self.hud_window.winfo_exists())
+            except Exception:
+                is_open = False
+
+        if is_open:
+            try:
+                self.hud_window.destroy()
+            except Exception:
+                pass
             self.hud_window = None
         else:
-            self.hud_window = DynamicIslandHUD(
-                self,
-                on_toggle_record=self._toggle_record,
-                on_toggle_play=self._toggle_play,
-                on_stop=self._stop_all,
-            )
+            try:
+                self.hud_window = DynamicIslandHUD(
+                    self,
+                    on_toggle_record=self._toggle_record,
+                    on_toggle_play=self._toggle_play,
+                    on_stop=self._stop_all,
+                    on_close=self._on_hud_closed,
+                )
+            except Exception as e:
+                self.hud_window = None
+                self.log_panel.log(f"HUD init notice: {e}", "WARNING")
 
     def _start_browser_inspection(self):
         self.browser_bridge.send_broadcast({"action": "START_ELEMENT_INSPECTOR"})
