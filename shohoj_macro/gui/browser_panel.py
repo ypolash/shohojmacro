@@ -46,7 +46,7 @@ class BrowserCompanionPanel(GlassCard):
         # Description
         ctk.CTkLabel(
             self,
-            text="100% isTrusted web automation bypassing Cloudflare & anti-bot scripts.",
+            text="Bypasses Cloudflare & Bot Protection.",
             font=ctk.CTkFont(size=10),
             text_color=GlassTheme.TEXT_SECONDARY,
             wraplength=260,

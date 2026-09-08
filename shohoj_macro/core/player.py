@@ -13,6 +13,7 @@ from shohoj_macro.core.humanizer import HumanizerEngine
 from shohoj_macro.core.stealth_core import StealthCore
 from shohoj_macro.core.bio_rhythm import BioRhythmEngine
 from shohoj_macro.core.triggers import TriggerEvaluator
+from shohoj_macro.core.recaptcha_solver import ReCaptchaSolver
 from shohoj_macro.core.window_tracker import WindowTracker
 from shohoj_macro.core.cv_engine import CVTemplateMatcher
 from shohoj_macro.core.csv_engine import CSVDataEngine
@@ -48,11 +49,13 @@ class MacroPlayer:
         on_loop_completed: Callable[[int, int], None] = None,
         on_playback_finished: Callable[[bool, str], None] = None,
         on_log_message: Callable[[str, str], None] = None,
+        on_supervised_intercept: Callable[[MacroEvent, Callable[[bool], None]], None] = None,
     ):
         self.on_step_started = on_step_started
         self.on_loop_completed = on_loop_completed
         self.on_playback_finished = on_playback_finished
         self.on_log_message = on_log_message
+        self.on_supervised_intercept = on_supervised_intercept
 
         self.state = PlaybackState.IDLE
         self.speed_multiplier = 1.0
@@ -64,9 +67,16 @@ class MacroPlayer:
         self.block_physical_input = False
         self.foreground_lock_title = ""
         self.corner_fail_safe = True
+        self.supervised_mode = False
 
         # Sub-Engines
         self.csv_engine = CSVDataEngine()
+        from shohoj_macro.core.cdp_spatial_bridge import CDPSpatialBridge
+        from shohoj_macro.core.nst_controller import NSTController
+        from shohoj_macro.core.settings_manager import SettingsManager
+        self.cdp_bridge = CDPSpatialBridge()
+        nst_api_key = SettingsManager().get("nst", "api_key", "")
+        self.nst_controller = NSTController(api_key=nst_api_key)
         self._events: list[MacroEvent] = []
         self._thread: Optional[threading.Thread] = None
         self._pause_event = threading.Event()
@@ -77,7 +87,7 @@ class MacroPlayer:
     def load_events(self, events: list[MacroEvent]):
         self._events = list(events)
 
-    def play(self, events: list[MacroEvent] = None, loops: int = 1, speed: float = 1.0):
+    def play(self, events: list[MacroEvent] = None, loops: int = 1, speed: float = 1.0, auto_csv_loops: bool = False):
         """Starts asynchronous macro playback."""
         if self.state == PlaybackState.PLAYING:
             return
@@ -90,8 +100,8 @@ class MacroPlayer:
                 self.on_log_message("No actions in timeline to play.", "WARN")
             return
 
-        # If CSV is loaded, set total loops to row count unless specified otherwise
-        if self.csv_engine.is_loaded and loops == 1 and self.csv_engine.get_row_count() > 1:
+        # Only auto-expand loops to CSV row count if explicitly requested (e.g. from Builder Studio)
+        if auto_csv_loops and self.csv_engine.is_loaded and self.csv_engine.get_row_count() > 1:
             self.total_loops = self.csv_engine.get_row_count()
         else:
             self.total_loops = loops
@@ -223,10 +233,12 @@ class MacroPlayer:
                     hires_sleep(rest_sec)
 
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             success = False
-            err_msg = str(e)
+            err_msg = f"{e}\n{tb}"
             if self.on_log_message:
-                self.on_log_message(f"Playback exception: {e}", "ERROR")
+                self.on_log_message(f"Playback exception: {e}\n{tb}", "ERROR")
         finally:
             if self.block_physical_input:
                 set_input_blocked(False)
@@ -241,6 +253,21 @@ class MacroPlayer:
                 self._execute_single_event(event, row_idx)
                 return True
             except Exception as e:
+                # If step is configured to SKIP, do not wake Idle Guardian or fail loop
+                if event.error_policy == ErrorPolicy.SKIP or "Optional element" in str(e):
+                    if self.on_log_message:
+                        self.on_log_message(f"Optional step skipped: {e}", "INFO")
+                    return True
+
+                # Idle Guardian / Self-Heal Hook for CDP Input Failures
+                if "CDP Element" in str(e) and "not found" in str(e):
+                    if self.on_log_message:
+                        self.on_log_message(f"⚠️ Element '{event.selector}' missing! Waking Idle Guardian...", "WARN")
+
+                    healed = self._self_heal(event, row_idx)
+                    if healed:
+                        return True # Healing succeeded, step complete
+
                 if attempt < max_attempts - 1:
                     time.sleep(0.15)
                 else:
@@ -248,6 +275,59 @@ class MacroPlayer:
                         self.on_log_message(f"Action error: {e}", "ERROR")
                     return False
         return False
+        
+    def _self_heal(self, event: MacroEvent, row_idx: int) -> bool:
+        """
+        The Idle Guardian's core fallback method.
+        Called when a CDP physical selector fails to find the element.
+        """
+        if not self.cdp_bridge._connected:
+            return False
+            
+        # 1. Wait for network idle to ensure the page is actually done loading
+        self.cdp_bridge.wait_for_idle(timeout_ms=5000)
+        
+        # 2. Re-check just in case the wait fixed it
+        rect = self.cdp_bridge.get_element_rect(event.selector)
+        if rect:
+            if self.on_log_message:
+                self.on_log_message("Network wait resolved the issue. Proceeding.", "SUCCESS")
+            try:
+                self._execute_single_event(event, row_idx) # Try again
+                return True
+            except:
+                pass
+                
+        # 3. True Failure -> Invoke Vision AI
+        if self.on_log_message:
+            self.on_log_message("Taking viewport screenshot for Vision AI...", "INFO")
+            
+        try:
+            # Capture compressed WebP to save Vision tokens (stateless)
+            screenshot_bytes = None
+            if self.cdp_bridge.ws_url:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    b = p.chromium.connect_over_cdp(self.cdp_bridge.ws_url)
+                    try:
+                        c = b.contexts[0] if b.contexts else b.new_context()
+                        v = [pg for pg in c.pages if not pg.url.startswith("chrome-extension://")]
+                        pg = v[-1] if v else c.new_page()
+                        screenshot_bytes = pg.screenshot(type="jpeg", quality=60)
+                    finally:
+                        b.close()
+            
+            # TODO (Phase 4): Send to OpenRouterClient to ask for new physical coordinates/selector
+            # For now, we scaffold the hook and pause.
+            self.pause()
+            if self.on_log_message:
+                self.on_log_message("Idle Guardian self-healing is scaffolded. Pausing operation for manual intervention.", "WARN")
+            return False
+            
+        except Exception as e:
+            if self.on_log_message:
+                self.on_log_message(f"Failed to capture screenshot for AI: {e}", "ERROR")
+            return False
 
     def _execute_single_event(self, event: MacroEvent, row_idx: int):
         effective_speed = self.speed_multiplier * self._bio_rhythm.get_speed_multiplier()
@@ -436,6 +516,92 @@ class MacroPlayer:
                 peek_duration_ms=event.peek_duration_ms / effective_speed,
                 cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe(),
             )
+            
+        elif t == EventType.CDP_PHYSICAL_INPUT:
+            if not self.cdp_bridge._connected:
+                raise Exception("CDP Bridge not connected! Did you run NST_PREPARE_PROFILE?")
+                
+            # Intercept for Supervised Mode
+            if self.supervised_mode and self.on_supervised_intercept:
+                intercept_event = threading.Event()
+                intercept_result = [False]
+                
+                def _resume_callback(approved: bool):
+                    intercept_result[0] = approved
+                    intercept_event.set()
+                    
+                # Highlight the element and ask user
+                if self.on_log_message:
+                    self.on_log_message(f"Supervised Mode: Intercepting click on '{event.selector}'", "WARN")
+                    
+                self.on_supervised_intercept(event, _resume_callback)
+                intercept_event.wait() # Block this background thread until user clicks Yes/No in GUI
+                
+                # Bring the browser back to focus after the GUI popup steals it
+                try:
+                    self.cdp_bridge.bring_to_front()
+                    time.sleep(0.2)  # Give Windows OS time to switch focus
+                except Exception:
+                    pass
+                
+                if not intercept_result[0]:
+                    if self.on_log_message:
+                        self.on_log_message("Supervised step rejected by user. Aborting operation.", "ERROR")
+                    self._stop_requested = True
+                    return
+                    
+            final_text = self.csv_engine.interpolate_text(event.text, row_idx) if event.text else ""
+            policy_val = event.error_policy.value if hasattr(event.error_policy, 'value') else str(event.error_policy)
+
+            # Bring browser to front
+            try:
+                self.cdp_bridge.bring_to_front()
+            except Exception:
+                pass
+
+            # Optional visual glide for human stealth
+            if self.humanizer_enabled:
+                try:
+                    rect = self.cdp_bridge.get_element_rect(event.selector)
+                    if rect:
+                        offset_x, offset_y = self.cdp_bridge.get_window_position()
+                        target_x = int(rect['x'] + offset_x + (rect['width'] / 2))
+                        target_y = int(rect['y'] + offset_y + (rect['height'] / 2))
+                        HumanizerEngine.move_humanized(
+                            target_x, target_y, duration_ms=100.0 / effective_speed, curve_type="windmouse",
+                            cancel_check_fn=lambda: self._stop_requested or self._check_panic_failsafe()
+                        )
+                except Exception:
+                    pass
+
+            # Execute High-Precision Direct DOM Action via CDP
+            self.cdp_bridge.perform_action(
+                selector=event.selector,
+                text=final_text,
+                error_policy=policy_val
+            )
+
+            # Auto-solve reCAPTCHA if we clicked on the reCAPTCHA iframe
+            if "iframe" in event.selector and "recaptcha" in event.selector.lower():
+                if self.on_log_message:
+                    self.on_log_message("Detecting reCAPTCHA challenge... Launching Auto-Solver", "INFO")
+                solver = ReCaptchaSolver(self.cdp_bridge)
+                result = solver.solve()
+                if result:
+                    if self.on_log_message:
+                        self.on_log_message(f"reCAPTCHA solved successfully! ({result})", "SUCCESS")
+                else:
+                    if self.on_log_message:
+                        self.on_log_message("reCAPTCHA solver failed to find a solution.", "ERROR")
+                    self._stop_requested = True
+
+        elif t == EventType.NST_PREPARE_PROFILE:
+            final_email = self.csv_engine.interpolate_text(event.text, row_idx)
+            ws_url = self.nst_controller.prepare_and_launch(final_email, event.target_value)
+            if ws_url:
+                self.cdp_bridge.connect(ws_url)
+                if self.on_log_message:
+                    self.on_log_message(f"✅ CDP Bridge connected to '{final_email}'", "SUCCESS")
 
         elif t == EventType.PIXEL_CHECK:
             matched = TriggerEvaluator.wait_for_pixel_color(

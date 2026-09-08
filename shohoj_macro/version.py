@@ -4,9 +4,9 @@ Shohoj Macro - Version & Developer Metadata (v2.0.0 Enterprise)
 
 __app_name__ = "Shohoj Macro"
 __app_name_bengali__ = "সহজ ম্যাক্রো"
-__version__ = "2.0.0"
-__edition__ = "Enterprise Stealth & Data Edition"
-__file_format_version__ = "2.0"
+__version__ = "2.2.0"
+__edition__ = "Enterprise Precision CDP & Direct DOM Edition"
+__file_format_version__ = "2.2"
 __author__ = "Polash Khan"
 __username__ = "ypolash2"
 __github__ = "https://github.com/ypolash2/shohoj-macro"

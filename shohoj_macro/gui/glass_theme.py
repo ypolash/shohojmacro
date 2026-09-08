@@ -1,30 +1,30 @@
 """
-Apple-Style Glassmorphic Theme Tokens, Custom Widgets & GlassTooltip
+Apple HIG & Windows 11 Fluent Glassmorphic Theme Tokens
 """
 
 import tkinter as tk
 import customtkinter as ctk
 
 class GlassTheme:
-    BG_DARK = "#0B0C10"           # Deep space backdrop
-    SURFACE_BASE = "#12141D"      # Window canvas base
-    CARD_BG = "#1A1D2B"           # Primary frosted card
-    CARD_BG_SECONDARY = "#222638" # Secondary card / hover
-    CARD_BORDER = "#2E344D"       # Subtle 1px glass border
-    CARD_BORDER_GLOW = "#3D4466"  # Highlighted card border
+    BG_DARK = "#09090B"           # Zinc-950 Backdrop / Transparent for Mica
+    SURFACE_BASE = "#09090B"      # Base
+    CARD_BG = "#18181B"           # Zinc-900 / Apple Surface
+    CARD_BG_SECONDARY = "#27272A" # Zinc-800 / Elevated
+    CARD_BORDER = "#3F3F46"       # Subtle Zinc-700 Border
+    CARD_BORDER_GLOW = "#52525B"  # Highlighted Border
     
     # Text Hierarchy
     TEXT_PRIMARY = "#FFFFFF"
-    TEXT_SECONDARY = "#949CB0"
-    TEXT_MUTED = "#5E667E"
+    TEXT_SECONDARY = "#A1A1AA"
+    TEXT_MUTED = "#71717A"
     
-    # Vibrant Accents
-    ACCENT_CYAN = "#00F0FF"       # Cyber Cyan
+    # Official Apple HIG Accents
+    ACCENT_CYAN = "#5AC8FA"       # Apple Teal
     ACCENT_BLUE = "#0A84FF"       # Apple System Blue
-    ACCENT_EMERALD = "#30D158"    # Apple Green (Active / Record)
-    ACCENT_ORANGE = "#FF9F0A"     # Apple Orange (Warning / Delay)
-    ACCENT_RED = "#FF453A"        # Apple Red (Stop / Error / Delete)
-    ACCENT_PURPLE = "#BF5AF2"     # Apple Purple (Humanizer / Zone)
+    ACCENT_EMERALD = "#32D74B"    # Apple Green
+    ACCENT_ORANGE = "#FF9F0A"     # Apple Orange
+    ACCENT_RED = "#FF453A"        # Apple Red
+    ACCENT_PURPLE = "#BF5AF2"     # Apple Purple
 
     FONT_FAMILY = "Segoe UI Variable Display" if True else "Segoe UI"
     

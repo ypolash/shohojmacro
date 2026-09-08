@@ -4,10 +4,11 @@ Provides comprehensive event models for hardware inputs, visual frame synchroniz
 CSV variable templating, and biological human kinematics.
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from enum import Enum
 import uuid
 import json
+import typing
 from typing import Optional
 
 
@@ -41,6 +42,11 @@ class EventType(str, Enum):
 
     # Triggers & Legacy
     PIXEL_CHECK = "pixel_check"
+
+    # AI & CDP Hybrid (v3.0)
+    CDP_PHYSICAL_INPUT = "cdp_physical_input"
+    AI_CAPTCHA_SOLVE = "ai_captcha_solve"
+    NST_PREPARE_PROFILE = "nst_prepare_profile"
 
 
 class ErrorPolicy(str, Enum):
@@ -102,6 +108,10 @@ class MacroEvent:
     target_hex_color: str = "#FFFFFF"
     color_tolerance: int = 10
 
+    # CDP & AI Hybrid Parameters (v3.0)
+    selector: str = ""
+    target_value: str = ""
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["event_type"] = self.event_type.value
@@ -111,11 +121,19 @@ class MacroEvent:
     @classmethod
     def from_dict(cls, data: dict) -> "MacroEvent":
         data_copy = dict(data)
-        if "event_type" in data_copy:
-            data_copy["event_type"] = EventType(data_copy["event_type"])
-        if "error_policy" in data_copy:
-            data_copy["error_policy"] = ErrorPolicy(data_copy["error_policy"])
-        return cls(**data_copy)
+        if "event_type" in data_copy and isinstance(data_copy["event_type"], str):
+            try:
+                data_copy["event_type"] = EventType(data_copy["event_type"])
+            except ValueError:
+                pass
+        if "error_policy" in data_copy and isinstance(data_copy["error_policy"], str):
+            try:
+                data_copy["error_policy"] = ErrorPolicy(data_copy["error_policy"])
+            except ValueError:
+                pass
+        valid_fields = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in data_copy.items() if k in valid_fields}
+        return cls(**filtered)
 
     def get_summary(self) -> str:
         t = self.event_type
@@ -157,6 +175,14 @@ class MacroEvent:
             return f"Human Scroll Peek ({self.scroll_dy} notches, {int(self.peek_duration_ms)}ms glance)"
         elif t == EventType.PIXEL_CHECK:
             return f"Check Pixel at ({self.x}, {self.y}) == {self.target_hex_color}"
+        elif t == EventType.CDP_PHYSICAL_INPUT:
+            preview = (self.text[:15] + "...") if len(self.text) > 15 else self.text
+            act = f"Type '{preview}'" if self.text else "Click"
+            return f"CDP {act} on '{self.selector}'"
+        elif t == EventType.AI_CAPTCHA_SOLVE:
+            return "AI CAPTCHA Solve via OpenRouter"
+        elif t == EventType.NST_PREPARE_PROFILE:
+            return f"NST Prepare & Launch '{self.text}'"
         return f"{self.event_type.value}"
 
     def get_category_icon(self) -> str:
@@ -171,4 +197,8 @@ class MacroEvent:
             return "📸"
         elif t in (EventType.HUMAN_WANDER_ZONE, EventType.HUMAN_WANDER_SLOW, EventType.HUMAN_SCROLL_PEEK):
             return "🌿"
+        elif t in (EventType.CDP_PHYSICAL_INPUT, EventType.NST_PREPARE_PROFILE):
+            return "🌐"
+        elif t == EventType.AI_CAPTCHA_SOLVE:
+            return "🤖"
         return "⚡"

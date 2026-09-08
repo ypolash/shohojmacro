@@ -18,12 +18,14 @@ class TimelineTableEditor(GlassCard):
     def __init__(
         self,
         master,
+        csv_engine=None,
         on_events_modified: Callable[[], None] = None,
         on_step_selected: Callable[[int], None] = None,
         on_trigger_snipper: Callable[[], None] = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
+        self.csv_engine = csv_engine
         self.on_events_modified = on_events_modified
         self.on_step_selected = on_step_selected
         self.on_trigger_snipper = on_trigger_snipper
@@ -374,7 +376,10 @@ class TimelineTableEditor(GlassCard):
         elif t == EventType.DELAY:
             DelayActionDialog(self, ev, on_save)
         elif t == EventType.TEXT_TYPE:
-            TextTypeActionDialog(self, ev, on_save)
+            TextTypeActionDialog(self, ev, on_save, csv_engine=self.csv_engine)
+        elif t in (EventType.CDP_PHYSICAL_INPUT, EventType.NST_PREPARE_PROFILE, EventType.AI_CAPTCHA_SOLVE):
+            from shohoj_macro.gui.action_dialogs import CDPActionDialog
+            CDPActionDialog(self, ev, on_save, csv_engine=self.csv_engine)
 
     def _duplicate_selected(self):
         indices = self._get_selected_indices()
@@ -467,9 +472,27 @@ class TimelineTableEditor(GlassCard):
             self.on_events_modified()
 
     def _add_action_popup(self):
-        new_ev = MacroEvent(event_type=EventType.MOUSE_CLICK, x=500, y=500, delay_after_ms=100)
-        self.events.append(new_ev)
-        self.refresh()
-        self.tree.selection_set(str(len(self.events) - 1))
-        if self.on_events_modified:
-            self.on_events_modified()
+        menu = tk.Menu(self, tearoff=0, bg="#161928", fg="#FFFFFF", activebackground="#00F0FF", activeforeground="#000000", bd=1)
+        
+        def _add(ev_type: EventType):
+            ev = MacroEvent(event_type=ev_type, delay_after_ms=200)
+            if ev_type == EventType.MOUSE_CLICK:
+                ev.x, ev.y = 500, 500
+            self.events.append(ev)
+            self.refresh()
+            self.tree.selection_set(str(len(self.events) - 1))
+            if self.on_events_modified:
+                self.on_events_modified()
+                
+        menu.add_command(label="🖱️ Mouse Click", command=lambda: _add(EventType.MOUSE_CLICK))
+        menu.add_command(label="⌨️ Text Typing", command=lambda: _add(EventType.TEXT_TYPE))
+        menu.add_command(label="⏳ Delay", command=lambda: _add(EventType.DELAY))
+        menu.add_separator()
+        menu.add_command(label="🌐 CDP Physical Input", command=lambda: _add(EventType.CDP_PHYSICAL_INPUT))
+        menu.add_command(label="🌐 NST Prepare Profile", command=lambda: _add(EventType.NST_PREPARE_PROFILE))
+        menu.add_command(label="🤖 AI Captcha Solve", command=lambda: _add(EventType.AI_CAPTCHA_SOLVE))
+        
+        # Post below the button
+        x = self.btn_add.winfo_rootx()
+        y = self.btn_add.winfo_rooty() + self.btn_add.winfo_height()
+        menu.post(x, y)

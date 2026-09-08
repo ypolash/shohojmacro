@@ -35,7 +35,7 @@ class DynamicIslandHUD(ctk.CTkToplevel):
 
         # Geometry
         screen_w = self.winfo_screenwidth()
-        self.hud_w = 430
+        self.hud_w = 490
         self.hud_h = 42
         pos_x = int((screen_w - self.hud_w) / 2)
         pos_y = 16
@@ -163,6 +163,21 @@ class DynamicIslandHUD(ctk.CTkToplevel):
         )
         self.btn_stop.pack(side="right", padx=2)
 
+        # Mark Done (F9) Button
+        self.btn_done = ctk.CTkButton(
+            self.capsule,
+            text="✅ Done (F9)",
+            width=78,
+            height=24,
+            corner_radius=12,
+            fg_color="#143A22",
+            hover_color=GlassTheme.ACCENT_EMERALD,
+            text_color=GlassTheme.ACCENT_EMERALD,
+            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=10, weight="bold"),
+            command=self._on_done_click,
+        )
+        self.btn_done.pack(side="right", padx=2)
+
         # Play/Pause Action Button
         self.btn_action = ctk.CTkButton(
             self.capsule,
@@ -177,6 +192,12 @@ class DynamicIslandHUD(ctk.CTkToplevel):
             command=self._on_action_click,
         )
         self.btn_action.pack(side="right", padx=2)
+
+    def _on_done_click(self):
+        if self.master and hasattr(self.master, 'ops_panel'):
+            self.master.ops_panel.resume_done_op()
+        elif self.on_toggle_play:
+            self.on_toggle_play()
 
     def _restore_studio(self):
         """Brings the main Shohoj Macro Studio window to the front."""
@@ -240,11 +261,18 @@ class DynamicIslandHUD(ctk.CTkToplevel):
                 self.status_dot.configure(text_color=GlassTheme.ACCENT_ORANGE)
                 self.status_label.configure(text="⏸ PAUSED")
                 self.btn_action.configure(text="▶ Resume", fg_color="#182A3A", text_color=GlassTheme.ACCENT_CYAN)
+            elif state == "WAITING_MANUAL":
+                self.capsule.configure(border_color=GlassTheme.ACCENT_EMERALD)
+                self.status_dot.configure(text_color=GlassTheme.ACCENT_EMERALD)
+                txt = f"CHECK & DONE {detail}" if detail else "MANUAL CHECK (F9)"
+                self.status_label.configure(text=f"🔔 {txt}")
+                self.btn_done.configure(text="✅ Done (F9)", fg_color=GlassTheme.ACCENT_EMERALD, text_color="#000000")
             else:
                 self.capsule.configure(border_color=GlassTheme.ACCENT_CYAN)
                 self.status_dot.configure(text_color=GlassTheme.ACCENT_CYAN)
                 self.status_label.configure(text="⚡ Shohoj Macro • Ready")
                 self.btn_action.configure(text="▶ Play", fg_color="#182A3A", text_color=GlassTheme.ACCENT_CYAN)
+                self.btn_done.configure(text="✅ Done (F9)", fg_color="#143A22", text_color=GlassTheme.ACCENT_EMERALD)
         except Exception:
             pass
 

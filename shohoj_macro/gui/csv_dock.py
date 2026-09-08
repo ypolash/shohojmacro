@@ -10,6 +10,8 @@ import customtkinter as ctk
 from typing import Callable, Optional
 from shohoj_macro.gui.glass_theme import GlassTheme, GlassCard, GlassButton, GlassTooltip
 from shohoj_macro.core.csv_engine import CSVDataEngine
+from shohoj_macro.gui.csv_viewer_window import CSVViewerWindow
+from shohoj_macro.core.settings_manager import SettingsManager
 
 
 class CSVDockPanel(GlassCard):
@@ -21,6 +23,21 @@ class CSVDockPanel(GlassCard):
         self.on_dataset_changed = on_dataset_changed
 
         self._build_ui()
+        
+        # Auto-load previous CSV
+        state = SettingsManager().config.get("state", {})
+        last_csv = state.get("last_csv_path")
+        if last_csv and os.path.exists(last_csv):
+            try:
+                self.csv_engine.load_csv(last_csv)
+                self.lbl_file_info.configure(
+                    text=f"Loaded: {os.path.basename(last_csv)}\\nRows: {self.csv_engine.get_row_count()} | Cols: {len(self.csv_engine.headers)}",
+                    text_color=GlassTheme.ACCENT_EMERALD
+                )
+                self._update_badges()
+                if self.on_dataset_changed:
+                    self.on_dataset_changed()
+            except: pass
 
     def _build_ui(self):
         # Header
@@ -79,7 +96,7 @@ class CSVDockPanel(GlassCard):
             hover_color="#333A4D",
             font=ctk.CTkFont(size=10),
             state="disabled",
-            command=self._open_data_preview,
+            command=self._open_data_viewer,
         )
         self.btn_preview.pack(side="left")
 
@@ -174,40 +191,7 @@ class CSVDockPanel(GlassCard):
         self.clipboard_append(var_str)
         self.update()
 
-    def _open_data_preview(self):
+    def _open_data_viewer(self):
         if not self.csv_engine.is_loaded:
             return
-        CSVPreviewModal(self, self.csv_engine)
-
-
-class CSVPreviewModal(ctk.CTkToplevel):
-    """Modal displaying table preview of the loaded CSV dataset."""
-
-    def __init__(self, master, csv_engine: CSVDataEngine):
-        super().__init__(master)
-        self.csv_engine = csv_engine
-        self.title(f"📊 Dataset Preview: {os.path.basename(csv_engine.filepath or '')}")
-        self.geometry("700x400")
-        self.attributes("-topmost", True)
-
-        self._build_table()
-
-    def _build_table(self):
-        table_frame = tk.Frame(self, bg=GlassTheme.BG_DARK)
-        table_frame.pack(fill="both", expand=True, padx=12, pady=12)
-
-        headers = self.csv_engine.headers
-        tree = ttk.Treeview(table_frame, columns=headers, show="headings", selectmode="browse")
-
-        for h in headers:
-            tree.heading(h, text=h)
-            tree.column(h, width=120, anchor="w")
-
-        for idx, row in enumerate(self.csv_engine.rows[:100]):  # Preview first 100
-            vals = [row.get(h, "") for h in headers]
-            tree.insert("", "end", values=vals)
-
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=scrollbar.set)
-        tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        CSVViewerWindow(self, self.csv_engine)

@@ -1,0 +1,138 @@
+{
+  "metadata": {
+    "name": "Edgbaston Ballot Registration Automation",
+    "version": "2.0.0",
+    "description": "Automates registration for Edgbaston 2027 MMD Ballot with CDP precision, template variables, and checkbox selection.",
+    "event_count": 16
+  },
+  "events": [
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#textbox-12",
+      "text": "{{First_Name}}",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Type First Name"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#textbox-13",
+      "text": "{{Last_Name}}",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Type Last Name"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#textbox-5",
+      "text": "{{Email}}",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Type Email Address"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#textbox-2",
+      "text": "{{Mobile}}",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Type Mobile Number"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-93",
+      "text": "WHITE - ENGLISH/WELSH/SCOTTISH/NORTHERN IRISH/BRITISH",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Select Ethnicity (Option 1)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-18",
+      "text": "England",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Select Favorite Team (England)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "input[value=\"17\"]",
+      "text": "",
+      "delay_after_ms": 400,
+      "error_policy": "retry_3",
+      "comment": "Check Day 1 (Thu 8 July)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "input[value=\"18\"]",
+      "text": "",
+      "delay_after_ms": 400,
+      "error_policy": "retry_3",
+      "comment": "Check Day 2 (Fri 9 July)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "input[value=\"19\"]",
+      "text": "",
+      "delay_after_ms": 400,
+      "error_policy": "retry_3",
+      "comment": "Check Day 3 (Sat 10 July)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "input[value=\"20\"]",
+      "text": "",
+      "delay_after_ms": 400,
+      "error_policy": "retry_3",
+      "comment": "Check Day 4 (Sun 11 July)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-88",
+      "text": "{{Adult_Tickets}}",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Select Adult Tickets (1-4)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-95",
+      "text": "0",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Select Under 16 Tickets (0)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-82",
+      "text": "Yes",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Interested in Warwickshire Bears (Yes)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-97",
+      "text": "Yes",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Matchday Hospitality (Yes)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "#dropdown-86",
+      "text": "Yes",
+      "delay_after_ms": 600,
+      "error_policy": "retry_3",
+      "comment": "Hotel Packages (Yes)"
+    },
+    {
+      "event_type": "cdp_physical_input",
+      "selector": "input[type=\"submit\"]",
+      "text": "",
+      "delay_after_ms": 2000,
+      "error_policy": "stop",
+      "comment": "Submit Ballot Form"
+    }
+  ]
+}

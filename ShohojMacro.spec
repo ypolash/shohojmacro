@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('C:/Users/Polash/AppData/Roaming/Python/Python314/site-packages/customtkinter', 'customtkinter'), ('assets', 'assets')]
+binaries = []
+hiddenimports = ['PIL', 'PIL._tkinter_finder', 'pynput', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'cv2', 'numpy', 'customtkinter', 'openpyxl', 'shohoj_macro', 'shohoj_macro.ai', 'shohoj_macro.core', 'shohoj_macro.gui', 'shohoj_macro.utils']
+tmp_ret = collect_all('shohoj_macro')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[('C:/Users/Polash/AppData/Roaming/Python/Python314/site-packages/customtkinter', 'customtkinter'), ('assets', 'assets')],
-    hiddenimports=['PIL', 'PIL._tkinter_finder', 'pynput', 'pynput.keyboard._win32', 'pynput.mouse._win32', 'cv2', 'numpy', 'customtkinter', 'shohoj_macro'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

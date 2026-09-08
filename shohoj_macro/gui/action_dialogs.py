@@ -196,15 +196,40 @@ class DelayActionDialog(BaseActionDialog):
 
 
 class TextTypeActionDialog(BaseActionDialog):
-    """Dialog for editing Text Typing events."""
+    """Dialog for editing Text Typing events with optional CSV variable mapping."""
 
-    def __init__(self, master, event: MacroEvent, on_save: Callable[[MacroEvent], None]):
+    def __init__(self, master, event: MacroEvent, on_save: Callable[[MacroEvent], None], csv_engine=None):
         super().__init__(master, event, on_save, title="⌨️ Edit Text Typing Action")
+        self.csv_engine = csv_engine
 
-        ctk.CTkLabel(self.body, text="Text String to Type:", text_color=GlassTheme.TEXT_SECONDARY).pack(anchor="w", padx=16, pady=(4, 2))
+        ctk.CTkLabel(self.body, text="Text String to Type (supports {{variable}} tags):", text_color=GlassTheme.TEXT_SECONDARY).pack(anchor="w", padx=16, pady=(4, 2))
         self.txt_content = ctk.CTkTextbox(self.body, height=80)
         self.txt_content.insert("1.0", self.event.text)
         self.txt_content.pack(fill="x", padx=16, pady=(0, 8))
+
+        # Optional CSV variable helper dropdown
+        if self.csv_engine and self.csv_engine.is_loaded:
+            headers = self.csv_engine.get_headers() if hasattr(self.csv_engine, 'get_headers') else getattr(self.csv_engine, 'headers', [])
+            if headers:
+                f_csv = ctk.CTkFrame(self.body, fg_color="transparent")
+                f_csv.pack(fill="x", padx=16, pady=(0, 8))
+                ctk.CTkLabel(f_csv, text="Insert CSV Column:", text_color=GlassTheme.ACCENT_CYAN, font=ctk.CTkFont(size=11, weight="bold")).pack(side="left")
+
+                def _insert_header(choice):
+                    if choice and choice != "-- Select Column --":
+                        self.txt_content.insert("insert", f"{{{{{choice}}}}}")
+                        self.opt_headers.set("-- Select Column --")
+
+                self.opt_headers = ctk.CTkOptionMenu(
+                    f_csv,
+                    values=["-- Select Column --"] + list(headers),
+                    command=_insert_header,
+                    width=170,
+                    height=26,
+                    font=ctk.CTkFont(size=11),
+                )
+                self.opt_headers.set("-- Select Column --")
+                self.opt_headers.pack(side="right")
 
         f_wpm = ctk.CTkFrame(self.body, fg_color="transparent")
         f_wpm.pack(fill="x", padx=16, pady=6)
@@ -221,6 +246,87 @@ class TextTypeActionDialog(BaseActionDialog):
             self.event.text = self.txt_content.get("1.0", "end-1c")
             self.event.wpm = int(self.ent_wpm.get())
             self.event.delay_after_ms = float(self.ent_delay_after.get())
+            self.on_save(self.event)
+            self.destroy()
+        except Exception as e:
+            print(f"Validation error: {e}")
+
+class CDPActionDialog(BaseActionDialog):
+    """Dialog for editing CDP Physical Input and NST Setup events with CSV mapping."""
+    
+    def __init__(self, master, event: MacroEvent, on_save: Callable[[MacroEvent], None], csv_engine=None):
+        title = "🌐 Edit CDP Action" if event.event_type == EventType.CDP_PHYSICAL_INPUT else "🌐 Edit Profile Setup"
+        if event.event_type == EventType.AI_CAPTCHA_SOLVE:
+            title = "🤖 Edit AI Captcha Solve"
+            
+        super().__init__(master, event, on_save, title=title)
+        self.csv_engine = csv_engine
+
+        # Selector Field
+        f_sel = ctk.CTkFrame(self.body, fg_color="transparent")
+        f_sel.pack(fill="x", padx=16, pady=6)
+        ctk.CTkLabel(f_sel, text="CSS Selector:", text_color=GlassTheme.TEXT_SECONDARY).pack(side="left")
+        self.ent_sel = ctk.CTkEntry(f_sel, width=200)
+        self.ent_sel.insert(0, self.event.selector)
+        self.ent_sel.pack(side="right")
+        
+        # Text/Value Mapping with CSV Dropdown
+        f_text = ctk.CTkFrame(self.body, fg_color="transparent")
+        f_text.pack(fill="x", padx=16, pady=6)
+        ctk.CTkLabel(f_text, text="Input Text/Value:", text_color=GlassTheme.TEXT_SECONDARY).pack(side="left")
+        
+        self.ent_text = ctk.CTkEntry(f_text, width=200)
+        self.ent_text.insert(0, self.event.text)
+        self.ent_text.pack(side="right")
+        
+        if self.csv_engine and self.csv_engine.is_loaded:
+            headers = self.csv_engine.get_headers()
+            if headers:
+                f_map = ctk.CTkFrame(self.body, fg_color="transparent")
+                f_map.pack(fill="x", padx=16, pady=6)
+                ctk.CTkLabel(f_map, text="Auto-Map CSV Column:", text_color=GlassTheme.ACCENT_CYAN).pack(side="left")
+                
+                self.opt_csv = ctk.CTkOptionMenu(f_map, values=["(Select)"] + headers, command=self._on_csv_select)
+                self.opt_csv.pack(side="right")
+                
+        self._add_delay_and_policy_fields()
+
+        # Optional Step Checkbox (for cookie banners, popups, disposable overlays)
+        f_opt = ctk.CTkFrame(self.body, fg_color="transparent")
+        f_opt.pack(fill="x", padx=16, pady=4)
+        self.chk_optional = ctk.CTkCheckBox(
+            f_opt,
+            text="Optional (Continue if element is not on page)",
+            font=ctk.CTkFont(size=11),
+            text_color=GlassTheme.ACCENT_CYAN,
+            command=self._on_optional_toggle
+        )
+        self.chk_optional.pack(side="left")
+        if self.event.error_policy == ErrorPolicy.SKIP or any(term in self.event.selector.lower() for term in ["onetrust", "cookie", "consent", "modal", "alert"]):
+            self.chk_optional.select()
+
+        self._add_bottom_buttons(self._save)
+
+    def _on_optional_toggle(self):
+        if self.chk_optional.get():
+            self.opt_error_policy.set("skip")
+        else:
+            self.opt_error_policy.set("stop")
+
+    def _on_csv_select(self, choice: str):
+        if choice != "(Select)":
+            self.ent_text.delete(0, "end")
+            self.ent_text.insert(0, f"{{{{{choice}}}}}")
+
+    def _save(self):
+        try:
+            self.event.selector = self.ent_sel.get()
+            self.event.text = self.ent_text.get()
+            self.event.delay_after_ms = float(self.ent_delay_after.get())
+            if self.chk_optional.get():
+                self.event.error_policy = ErrorPolicy.SKIP
+            else:
+                self.event.error_policy = ErrorPolicy(self.opt_error_policy.get())
             self.on_save(self.event)
             self.destroy()
         except Exception as e:

@@ -39,3 +39,6 @@ ENV/
 *.tmp
 temp/
 wal_journal.bin
+releases/*.zip
+ffmpeg*
+

@@ -23,6 +23,9 @@ from shohoj_macro.gui.image_snipper import ScreenSnipperModal
 from shohoj_macro.gui.settings_dialog import SettingsDialog
 from shohoj_macro.gui.export_dialog import ExportDialog
 from shohoj_macro.gui.about_dialog import AboutDialog
+from shohoj_macro.gui.operation_panel import OperationStudioPanel
+from shohoj_macro.gui.ai_training_wizard import AITrainingWizard
+from shohoj_macro.gui.csv_trace_tab import CSVTraceTabFrame
 
 from shohoj_macro.core.events import MacroEvent, EventType
 from shohoj_macro.core.recorder import MacroRecorder
@@ -32,6 +35,7 @@ from shohoj_macro.core.exporter import MacroExporter
 from shohoj_macro.core.hotkeys import GlobalHotkeyManager
 from shohoj_macro.core.browser_bridge import BrowserBridgeServer
 from shohoj_macro.utils.dpi_helper import init_dpi_awareness
+from shohoj_macro.utils.window_effects import apply_mica
 from shohoj_macro.version import __app_name__, __version__, __author__, __username__
 
 
@@ -46,7 +50,9 @@ class ShohojMacroStudio(ctk.CTk):
         self.title(f"{__app_name__} v{__version__} • Enterprise Studio")
         self.geometry("1260x780")
         self.minsize(1080, 680)
-        self.configure(fg_color=GlassTheme.BG_DARK)
+        self.configure(fg_color=GlassTheme.BG_DARK) # CTk root cannot be transparent
+        # Apply Windows 11 Mica Blur
+        self.after(10, lambda: apply_mica(self.winfo_id(), dark_mode=True))
 
         # Core Engines
         self.recorder = MacroRecorder(on_event_recorded=self._on_event_recorded)
@@ -65,6 +71,29 @@ class ShohojMacroStudio(ctk.CTk):
         self.browser_bridge.on_element_picked = self._on_browser_element_picked
         self.browser_bridge.on_status_change = self._on_browser_status_change
 
+        # v3.0 Orchestrator Engines
+        from shohoj_macro.core.proxy_manager import ProxySessionManager
+        from shohoj_macro.ai.openrouter_client import OpenRouterClient
+        from shohoj_macro.ai.captcha_solver import ReCaptchaSolver
+        from shohoj_macro.ai.orchestrator import OperationOrchestrator
+        
+        import os
+        proxy_dir = os.path.join(os.getcwd(), "proxies")
+        os.makedirs(proxy_dir, exist_ok=True)
+        self.proxy_manager = ProxySessionManager(proxy_dir=proxy_dir)
+        self.ai_client = OpenRouterClient()
+        self.captcha_solver = ReCaptchaSolver(self.player.cdp_bridge, self.ai_client)
+        
+        self.orchestrator = OperationOrchestrator(
+            excel_engine=self.player.csv_engine,
+            proxy_manager=self.proxy_manager,
+            nst_controller=self.player.nst_controller,
+            macro_player=self.player,
+            ai_client=self.ai_client,
+            captcha_solver=self.captcha_solver,
+            cdp_bridge=self.player.cdp_bridge
+        )
+
         # Settings
         self.settings = {
             "record_hotkey": "<f8>",
@@ -82,7 +111,6 @@ class ShohojMacroStudio(ctk.CTk):
         self.hud_window = None
 
         # Build UI Structure
-        self._build_top_ribbon()
         self._build_main_layout()
         self._build_status_bar()
 
@@ -111,232 +139,208 @@ class ShohojMacroStudio(ctk.CTk):
         except Exception:
             pass
 
-    def _build_top_ribbon(self):
-        self.ribbon = GlassCard(self, height=58, corner_radius=12)
-        self.ribbon.pack(fill="x", padx=14, pady=(12, 6))
-
-        # Brand / Logo
-        lbl_logo = ctk.CTkLabel(
-            self.ribbon,
-            text=f"⚡ {__app_name__}",
-            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=15, weight="bold"),
-            text_color=GlassTheme.ACCENT_CYAN,
-        )
-        lbl_logo.pack(side="left", padx=(14, 14))
-
-        # Record Button
-        self.btn_record = ctk.CTkButton(
-            self.ribbon,
-            text="● Record (F8)",
-            width=105,
-            height=32,
-            corner_radius=8,
-            fg_color="#3A181C",
-            hover_color=GlassTheme.ACCENT_RED,
-            text_color=GlassTheme.ACCENT_RED,
-            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
-            command=self._toggle_record,
-        )
-        self.btn_record.pack(side="left", padx=3)
-        GlassTooltip(self.btn_record, "Start or stop global action recording (F8)")
-
-        # Play Button
-        self.btn_play = ctk.CTkButton(
-            self.ribbon,
-            text="▶ Play (F9)",
-            width=95,
-            height=32,
-            corner_radius=8,
-            fg_color="#143A22",
-            hover_color=GlassTheme.ACCENT_EMERALD,
-            text_color=GlassTheme.ACCENT_EMERALD,
-            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
-            command=self._toggle_play,
-        )
-        self.btn_play.pack(side="left", padx=3)
-        GlassTooltip(self.btn_play, "Play or pause current macro sequence (F9)")
-
-        # Stop Button
-        self.btn_stop = ctk.CTkButton(
-            self.ribbon,
-            text="⏹ Stop (F10)",
-            width=95,
-            height=32,
-            corner_radius=8,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color="#333A4D",
-            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=11, weight="bold"),
-            command=self._stop_all,
-        )
-        self.btn_stop.pack(side="left", padx=3)
-        GlassTooltip(self.btn_stop, "Emergency kill switch / abort playback (F10)")
-
-        # Separator
-        ctk.CTkLabel(self.ribbon, text="|", text_color=GlassTheme.CARD_BORDER).pack(side="left", padx=6)
-
-        # Recording Mode Option
-        ctk.CTkLabel(self.ribbon, text="Mode:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
-        self.opt_rec_mode = ctk.CTkOptionMenu(
-            self.ribbon,
-            values=["Clicks & Keys (Clean)", "All Motion", "Keys Only"],
-            width=135,
-            height=28,
-            font=ctk.CTkFont(size=10),
-            command=self._on_rec_mode_changed,
-        )
-        self.opt_rec_mode.set("Clicks & Keys (Clean)")
-        self.opt_rec_mode.pack(side="left", padx=(0, 6))
-
-        # Loops input
-        ctk.CTkLabel(self.ribbon, text="Loops:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
-        self.ent_loops = ctk.CTkEntry(self.ribbon, width=42, height=28)
-        self.ent_loops.insert(0, "1")
-        self.ent_loops.pack(side="left", padx=(0, 6))
-        GlassTooltip(self.ent_loops, "Number of repetitions (1 = once, 0 = infinite)")
-
-        # Speed Slider
-        ctk.CTkLabel(self.ribbon, text="Speed:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
-        self.speed_slider = ctk.CTkSlider(self.ribbon, from_=0.2, to=3.0, number_of_steps=28, width=75, command=self._on_speed_changed)
-        self.speed_slider.set(1.0)
-        self.speed_slider.pack(side="left", padx=(0, 2))
-        self.lbl_speed_val = ctk.CTkLabel(self.ribbon, text="1.0x", font=ctk.CTkFont(size=10, weight="bold"), text_color=GlassTheme.TEXT_PRIMARY, width=28)
-        self.lbl_speed_val.pack(side="left", padx=(0, 6))
-
-        # Humanizer Toggle Switch
-        self.switch_humanizer = ctk.CTkSwitch(
-            self.ribbon,
-            text="Humanize",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            progress_color=GlassTheme.ACCENT_PURPLE,
-            command=self._on_humanizer_toggle,
-        )
-        self.switch_humanizer.select()
-        self.switch_humanizer.pack(side="left", padx=4)
-        GlassTooltip(self.switch_humanizer, "Toggle natural smooth Minimum-Jerk trajectories, 8-12Hz tremors and Gaussian dispersion")
-
-        # Right Side Tools
-        self.btn_about = ctk.CTkButton(
-            self.ribbon,
-            text="ℹ️",
-            width=30,
-            height=28,
-            corner_radius=6,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color="#333A4D",
-            command=lambda: AboutDialog(self),
-        )
-        self.btn_about.pack(side="right", padx=(2, 10))
-        GlassTooltip(self.btn_about, "About Shohoj Macro & Developer Credits")
-
-        self.btn_settings = ctk.CTkButton(
-            self.ribbon,
-            text="⚙️",
-            width=30,
-            height=28,
-            corner_radius=6,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color="#333A4D",
-            command=self._open_settings,
-        )
-        self.btn_settings.pack(side="right", padx=2)
-        GlassTooltip(self.btn_settings, "Preferences, Hotkeys & Fail-safe Settings")
-
-        self.btn_export = ctk.CTkButton(
-            self.ribbon,
-            text="📤 Export",
-            width=68,
-            height=28,
-            corner_radius=6,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color=GlassTheme.ACCENT_BLUE,
-            command=self._open_export,
-        )
-        self.btn_export.pack(side="right", padx=2)
-        GlassTooltip(self.btn_export, "Export macro to standalone Python (.py) or AutoHotkey (.ahk)")
-
-        self.btn_hud = ctk.CTkButton(
-            self.ribbon,
-            text="🏝️ Mini HUD",
-            width=80,
-            height=28,
-            corner_radius=6,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color=GlassTheme.ACCENT_CYAN,
-            command=self._toggle_dynamic_island,
-        )
-        self.btn_hud.pack(side="right", padx=2)
-        GlassTooltip(self.btn_hud, "Toggle floating top-screen Dynamic Island HUD widget")
-
-        self.btn_save = ctk.CTkButton(
-            self.ribbon,
-            text="💾 Save",
-            width=60,
-            height=28,
-            corner_radius=6,
-            fg_color=GlassTheme.CARD_BG_SECONDARY,
-            hover_color="#333A4D",
-            command=self._save_macro,
-        )
-        self.btn_save.pack(side="right", padx=2)
-        GlassTooltip(self.btn_save, "Save macro sequence to .shj file")
-
+    
     def _build_main_layout(self):
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True, padx=14, pady=4)
 
-        # 1. Left Sidebar: Tabview for Macro Library + CSV Data Dock
-        self.left_tabs = ctk.CTkTabview(
-            self.main_container,
-            width=210,
-            fg_color=GlassTheme.CARD_BG,
-            segmented_button_selected_color=GlassTheme.ACCENT_BLUE,
-            segmented_button_selected_hover_color=GlassTheme.ACCENT_CYAN,
-        )
-        self.left_tabs.pack(side="left", fill="y", padx=(0, 8))
+        # --- Sidebar ---
+        self.sidebar = GlassCard(self.main_container, width=220, corner_radius=12)
+        self.sidebar.pack(side="left", fill="y", padx=(0, 10))
+        self.sidebar.pack_propagate(False)
 
-        self.tab_library = self.left_tabs.add("📁 Library")
-        self.tab_csv = self.left_tabs.add("📊 CSV Data")
-
-        # Macro Library in Tab 1
-        self.library_sidebar = MacroLibrarySidebar(
-            self.tab_library,
-            width=190,
-            on_macro_selected=self._load_macro_from_path,
+        lbl_logo = ctk.CTkLabel(
+            self.sidebar,
+            text=f"⚡ {__app_name__}",
+            font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=16, weight="bold"),
+            text_color=GlassTheme.ACCENT_CYAN,
         )
+        lbl_logo.pack(pady=(20, 30))
+
+        # Sidebar Buttons
+        def create_nav_btn(text, command):
+            btn = ctk.CTkButton(
+                self.sidebar, text=text, command=command, fg_color="transparent",
+                hover_color=GlassTheme.CARD_BG_SECONDARY, anchor="w",
+                font=ctk.CTkFont(family=GlassTheme.FONT_FAMILY, size=13, weight="bold")
+            )
+            btn.pack(fill="x", padx=10, pady=5)
+            return btn
+
+        self.btn_nav_builder = create_nav_btn("🛠️ Builder Studio", lambda: self._switch_mode("builder"))
+        self.btn_nav_ops = create_nav_btn("🚀 Operations", lambda: self._switch_mode("ops"))
+        self.btn_nav_ai = create_nav_btn("🤖 AI Co-Pilot", lambda: self._switch_mode("ai"))
+        
+        # Spacer
+        ctk.CTkFrame(self.sidebar, fg_color="transparent").pack(expand=True, fill="both")
+        
+        self.btn_nav_export = create_nav_btn("📤 Export Macro", self._open_export)
+        self.btn_nav_save = create_nav_btn("💾 Save Macro", self._save_macro)
+        self.btn_nav_settings = create_nav_btn("⚙️ Settings", self._open_settings)
+        self.btn_nav_about = create_nav_btn("ℹ️ About", lambda: AboutDialog(self))
+
+        # --- Content Area ---
+        self.content_area = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.content_area.pack(side="right", fill="both", expand=True)
+
+        # 1. Builder Mode
+        self.frame_builder = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self._build_builder_mode()
+
+        # 2. Operations Mode
+        self.frame_ops = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self._build_ops_mode()
+        
+        # 3. AI Mode
+        self.frame_ai = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self._build_ai_mode()
+
+        # Default Mode
+        self._switch_mode("builder")
+
+    def _switch_mode(self, mode):
+        self.frame_builder.pack_forget()
+        self.frame_ops.pack_forget()
+        self.frame_ai.pack_forget()
+        
+        self.btn_nav_builder.configure(fg_color="transparent")
+        self.btn_nav_ops.configure(fg_color="transparent")
+        self.btn_nav_ai.configure(fg_color="transparent")
+
+        if mode == "builder":
+            self.frame_builder.pack(fill="both", expand=True)
+            self.btn_nav_builder.configure(fg_color=GlassTheme.CARD_BG_SECONDARY)
+        elif mode == "ops":
+            self.frame_ops.pack(fill="both", expand=True)
+            self.btn_nav_ops.configure(fg_color=GlassTheme.CARD_BG_SECONDARY)
+        elif mode == "ai":
+            self.frame_ai.pack(fill="both", expand=True)
+            self.btn_nav_ai.configure(fg_color=GlassTheme.CARD_BG_SECONDARY)
+
+    def _build_builder_mode(self):
+        # Top Toolbar
+        toolbar = GlassCard(self.frame_builder, height=50, corner_radius=10)
+        toolbar.pack(fill="x", pady=(0, 10))
+
+        self.btn_record = ctk.CTkButton(toolbar, text="● Record (F8)", width=105, height=32, fg_color=GlassTheme.CARD_BG_SECONDARY, hover_color=GlassTheme.ACCENT_RED, text_color=GlassTheme.ACCENT_RED, command=self._toggle_record)
+        self.btn_record.pack(side="left", padx=10, pady=9)
+
+        self.btn_play = ctk.CTkButton(toolbar, text="▶ Play (F9)", width=95, height=32, fg_color=GlassTheme.CARD_BG_SECONDARY, hover_color=GlassTheme.ACCENT_EMERALD, text_color=GlassTheme.ACCENT_EMERALD, command=self._toggle_play)
+        self.btn_play.pack(side="left", padx=3)
+
+        self.btn_stop = ctk.CTkButton(toolbar, text="⏹ Stop (F10)", width=95, height=32, fg_color=GlassTheme.CARD_BG_SECONDARY, hover_color="#333A4D", command=self._stop_all)
+        self.btn_stop.pack(side="left", padx=3)
+        
+        ctk.CTkLabel(toolbar, text="|", text_color=GlassTheme.CARD_BORDER).pack(side="left", padx=6)
+        
+        self.opt_rec_mode = ctk.CTkOptionMenu(toolbar, values=["Clicks & Keys (Clean)", "All Motion", "Keys Only"], width=135, height=28, command=self._on_rec_mode_changed)
+        self.opt_rec_mode.set("Clicks & Keys (Clean)")
+        self.opt_rec_mode.pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(toolbar, text="|", text_color=GlassTheme.CARD_BORDER).pack(side="left", padx=6)
+
+        # Loops input
+        ctk.CTkLabel(toolbar, text="Loops:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
+        self.ent_loops = ctk.CTkEntry(toolbar, width=45, height=28, font=ctk.CTkFont(size=11))
+        self.ent_loops.insert(0, "1")
+        self.ent_loops.pack(side="left", padx=(0, 6))
+
+        # Speed slider
+        ctk.CTkLabel(toolbar, text="Speed:", font=ctk.CTkFont(size=11), text_color=GlassTheme.TEXT_SECONDARY).pack(side="left", padx=(2, 2))
+        self.speed_slider = ctk.CTkSlider(toolbar, from_=0.2, to=5.0, number_of_steps=48, width=90, height=16, command=self._on_speed_changed)
+        self.speed_slider.set(1.0)
+        self.speed_slider.pack(side="left", padx=(0, 4))
+        self.lbl_speed_val = ctk.CTkLabel(toolbar, text="1.0x", font=ctk.CTkFont(size=10, weight="bold"), width=30)
+        self.lbl_speed_val.pack(side="left", padx=(0, 6))
+
+        # Main Builder Content (Timeline + Right Panel)
+        content = ctk.CTkFrame(self.frame_builder, fg_color="transparent")
+        content.pack(fill="both", expand=True)
+
+        self.timeline = TimelineTableEditor(content, csv_engine=self.player.csv_engine, on_events_modified=self._on_timeline_modified, on_step_selected=self._on_step_selected, on_trigger_snipper=self._launch_screen_snipper)
+        self.timeline.pack(side="left", fill="both", expand=True, padx=(0, 10))
+
+        right_panel = ctk.CTkFrame(content, width=310, fg_color="transparent")
+        right_panel.pack(side="right", fill="y")
+        
+        self.trajectory_canvas = TrajectoryCanvas(right_panel, width=300, height=140)
+        self.trajectory_canvas.pack(fill="x", pady=(0, 8))
+        
+        self.library_sidebar = MacroLibrarySidebar(right_panel, width=300, on_macro_selected=self._load_macro_from_path)
         self.library_sidebar.pack(fill="both", expand=True)
 
-        # CSV Dock in Tab 2
-        self.csv_dock = CSVDockPanel(
-            self.tab_csv,
-            csv_engine=self.player.csv_engine,
-            on_dataset_changed=self._on_csv_dataset_changed,
-        )
-        self.csv_dock.pack(fill="both", expand=True)
+    def _build_ops_mode(self):
+        # Left Scrollable Sidebar to fix bottom overflow on small windows/resizing
+        left_col = ctk.CTkScrollableFrame(self.frame_ops, width=320, fg_color="transparent")
+        left_col.pack(side="left", fill="both", expand=False, padx=(0, 10))
 
-        # 2. Center: Timeline Table Editor
-        self.timeline = TimelineTableEditor(
-            self.main_container,
-            on_events_modified=self._on_timeline_modified,
-            on_step_selected=self._on_step_selected,
-            on_trigger_snipper=self._launch_screen_snipper,
-        )
-        self.timeline.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        right_col = ctk.CTkFrame(self.frame_ops, fg_color="transparent")
+        right_col.pack(side="right", fill="both", expand=True)
 
-        # 3. Right Side: Visualizer, Browser Panel & Log
-        self.right_panel = ctk.CTkFrame(self.main_container, width=310, fg_color="transparent")
-        self.right_panel.pack(side="right", fill="y")
-
-        self.trajectory_canvas = TrajectoryCanvas(self.right_panel, width=300, height=140)
-        self.trajectory_canvas.pack(fill="x", pady=(0, 8))
-
-        self.browser_panel = BrowserCompanionPanel(
-            self.right_panel,
-            on_inspect_web_element=self._start_browser_inspection,
-        )
+        self.browser_panel = BrowserCompanionPanel(right_col, on_inspect_web_element=self._start_browser_inspection)
         self.browser_panel.pack(fill="x", pady=(0, 8))
 
-        self.log_panel = PlaybackLogPanel(self.right_panel, height=180)
+        # Tabview for Logs & CSV Data Trace
+        self.ops_tabview = ctk.CTkTabview(
+            right_col,
+            segmented_button_selected_color=GlassTheme.ACCENT_CYAN,
+            segmented_button_selected_hover_color=GlassTheme.ACCENT_CYAN,
+        )
+        self.ops_tabview.pack(fill="both", expand=True)
+
+        tab_logs = self.ops_tabview.add("📋 Activity Logs")
+        tab_csv_trace = self.ops_tabview.add("📊 CSV Data Trace")
+
+        self.log_panel = PlaybackLogPanel(tab_logs)
         self.log_panel.pack(fill="both", expand=True)
+
+        self.csv_trace_tab = CSVTraceTabFrame(tab_csv_trace, csv_engine=self.player.csv_engine)
+        self.csv_trace_tab.pack(fill="both", expand=True)
+
+        self.csv_dock = CSVDockPanel(left_col, csv_engine=self.player.csv_engine, on_dataset_changed=self._on_csv_dataset_changed)
+        self.csv_dock.pack(fill="x", pady=(0, 10))
+
+        self.ops_panel = OperationStudioPanel(
+            left_col,
+            orchestrator=self.orchestrator,
+            log_panel=self.log_panel,
+            show_settings_callback=self._open_settings,
+            on_switch_to_builder=lambda: self._switch_mode("builder"),
+        )
+        self.ops_panel.pack(fill="x")
+
+        # Link log panel & orchestrator callbacks
+        self.ops_panel.log_panel = self.log_panel
+        self.orchestrator.on_log = self.ops_panel._on_log
+        self.orchestrator.on_waiting_manual_step = self._on_waiting_manual_step
+        self.orchestrator.on_execution_state_change = self._on_op_execution_state_change
+        self.ops_panel.on_range_changed = self.csv_trace_tab.set_target_range
+        self.csv_trace_tab.on_set_start_row = self._on_set_start_row_from_trace
+
+    def _on_set_start_row_from_trace(self, row_num: int):
+        if hasattr(self, 'ops_panel'):
+            self.ops_panel.entry_start_row.delete(0, "end")
+            self.ops_panel.entry_start_row.insert(0, str(row_num))
+            self.ops_panel._on_range_entry_changed()
+            if self.log_panel:
+                self.log_panel.log(f"Start Row set to {row_num} from CSV trace.", "INFO")
+
+    def _on_op_execution_state_change(self, state: str, curr_row: int = 0, tot_rows: int = 0):
+        if hasattr(self, 'ops_panel'):
+            self.ops_panel.set_execution_state(state, curr_row, tot_rows)
+        if hasattr(self, 'csv_trace_tab') and state == "RUNNING" and curr_row > 0:
+            self.csv_trace_tab.set_active_row(curr_row - 1)
+
+    def _build_ai_mode(self):
+        lbl = ctk.CTkLabel(self.frame_ai, text="🧠 AI Co-Pilot Studio", font=ctk.CTkFont(size=20, weight="bold"))
+        lbl.pack(pady=20)
+        
+        # We will embed the AI Wizard here, or provide a launch button.
+        btn_launch = GlassButton(self.frame_ai, text="Launch AI Wizard", command=self._open_wizard, height=40, font=ctk.CTkFont(size=14, weight="bold"))
+        btn_launch.pack(pady=20)
+        
+        self.lbl_ai_status = ctk.CTkLabel(self.frame_ai, text="AI Co-Pilot is currently implemented as a floating window.\\nClick above to launch it.", text_color=GlassTheme.TEXT_SECONDARY)
+        self.lbl_ai_status.pack()
 
     def _build_status_bar(self):
         self.status_bar = ctk.CTkFrame(self, height=26, fg_color="transparent")
@@ -357,7 +361,6 @@ class ShohojMacroStudio(ctk.CTk):
             text_color=GlassTheme.TEXT_MUTED,
         )
         lbl_credits.pack(side="right")
-
     # ================= Action Callbacks =================
 
     def _launch_screen_snipper(self):
@@ -389,6 +392,18 @@ class ShohojMacroStudio(ctk.CTk):
             self.ent_loops.delete(0, "end")
             self.ent_loops.insert(0, str(count))
             self.log_panel.log(f"CSV Dataset linked ({count} rows). Auto-set loops to {count}.", "SUCCESS")
+            # Notify ops panel for Smart Start Row Memory
+            if hasattr(self, 'ops_panel'):
+                self.ops_panel.on_csv_loaded(self.player.csv_engine.filepath)
+            if hasattr(self, 'csv_trace_tab'):
+                self.csv_trace_tab.load_dataset()
+                if hasattr(self, 'ops_panel'):
+                    try:
+                        s = int(self.ops_panel.entry_start_row.get().strip())
+                        e = int(self.ops_panel.entry_end_row.get().strip())
+                        self.csv_trace_tab.set_target_range(s, e)
+                    except Exception:
+                        pass
         else:
             self.log_panel.log("CSV Dataset unlinked.", "INFO")
 
@@ -498,6 +513,8 @@ class ShohojMacroStudio(ctk.CTk):
                 self.hud_window.update_status("PLAYING", f"Loop 1/{loops}")
 
     def _stop_all(self):
+        if hasattr(self, 'orchestrator'):
+            self.orchestrator.stop()
         if self.recorder.is_recording:
             self._toggle_record()
         if self.player.is_playing() or self.player.is_paused():
@@ -513,7 +530,22 @@ class ShohojMacroStudio(ctk.CTk):
         self.after(0, self._toggle_record)
 
     def _hotkey_toggle_play(self):
+        # If the Orchestrator is waiting for manual verification, F9 acts as 'Mark Done & Next'
+        if hasattr(self, 'orchestrator') and getattr(self.orchestrator, 'is_waiting_manual_step', lambda: False)():
+            if hasattr(self, 'ops_panel'):
+                self.after(0, self.ops_panel.resume_done_op)
+                return
         self.after(0, self._toggle_play)
+
+    def _on_waiting_manual_step(self, row_num: int):
+        def _update():
+            self._play_sound("record_stop")
+            self.lbl_status.configure(text=f"🔔 Row {row_num} filled! Waiting for manual check... Press F9 or click 'Done'.")
+            if self.hud_window:
+                self.hud_window.update_status("WAITING_MANUAL", f"Row {row_num}")
+            if hasattr(self, 'csv_trace_tab'):
+                self.csv_trace_tab.set_active_row(row_num - 1)
+        self.after(0, _update)
 
     def _hotkey_stop(self):
         self.after(0, self._stop_all)
@@ -553,10 +585,16 @@ class ShohojMacroStudio(ctk.CTk):
             if self.hud_window:
                 self.hud_window.update_status("IDLE")
 
-        self.after(0, _finish)
+        try:
+            self.after(0, _finish)
+        except Exception:
+            pass
 
     def _on_log_message(self, msg: str, level: str):
-        self.after(0, lambda: self.log_panel.log(msg, level))
+        try:
+            self.after(0, lambda: self.log_panel.log(msg, level))
+        except Exception:
+            pass
 
     def _on_timeline_modified(self):
         events = self.timeline.get_events()
@@ -601,18 +639,31 @@ class ShohojMacroStudio(ctk.CTk):
         def _add():
             screen_x = data.get("screenX", 500)
             screen_y = data.get("screenY", 500)
-            desc = data.get("textContent") or data.get("cssSelector", "Web Element")
-            ev = MacroEvent(
-                event_type=EventType.MOUSE_CLICK,
-                x=screen_x,
-                y=screen_y,
-                human_target_radius=10,
-                comment=f"Web: {desc}",
-                delay_after_ms=200,
-            )
+            selector = data.get("cssSelector", "")
+            desc = data.get("textContent", "Web Element")
+            
+            if selector:
+                # v3.5: Auto-create CDP action
+                ev = MacroEvent(
+                    event_type=EventType.CDP_PHYSICAL_INPUT,
+                    selector=selector,
+                    comment=f"CDP: {desc[:20]}",
+                    delay_after_ms=200,
+                )
+                self.log_panel.log(f"Captured CDP Element: '{selector}'", "SUCCESS")
+            else:
+                ev = MacroEvent(
+                    event_type=EventType.MOUSE_CLICK,
+                    x=screen_x,
+                    y=screen_y,
+                    human_target_radius=10,
+                    comment=f"Web: {desc}",
+                    delay_after_ms=200,
+                )
+                self.log_panel.log(f"Captured Web Element at ({screen_x}, {screen_y})", "SUCCESS")
+                
             self.timeline.append_event_live(ev)
             self.trajectory_canvas.update_trajectory(self.timeline.get_events())
-            self.log_panel.log(f"Captured Web Element: '{desc}' at ({screen_x}, {screen_y})", "SUCCESS")
 
         self.after(0, _add)
 
@@ -658,6 +709,15 @@ class ShohojMacroStudio(ctk.CTk):
 
         SettingsDialog(self, self.settings, on_save)
 
+    def _open_wizard(self):
+        def on_wizard_complete(events):
+            self.timeline.set_events(events)
+            self.trajectory_canvas.update_trajectory(events)
+            self.log_panel.log(f"AI Co-Pilot generated {len(events)} steps.", "SUCCESS")
+            
+        # Needs orchestrator's cdp_bridge, nst_controller, and ai client
+        AITrainingWizard(self, self.orchestrator.cdp, self.player.nst_controller, self.orchestrator.ai, on_wizard_complete)
+
     def _open_export(self):
         events = self.timeline.get_events()
         if not events:
@@ -681,6 +741,16 @@ class ShohojMacroStudio(ctk.CTk):
 
     def _on_close(self):
         self._stop_all()
+        if hasattr(self, 'orchestrator'):
+            try:
+                self.orchestrator.stop()
+            except Exception:
+                pass
+        if self.hud_window and self.hud_window.winfo_exists():
+            try:
+                self.hud_window.destroy()
+            except Exception:
+                pass
         self.hotkeys.stop()
         self.browser_bridge.stop()
         self.destroy()

@@ -31,6 +31,7 @@ def build_executable():
         "-m",
         "PyInstaller",
         "--noconfirm",
+        "--clean",                 # Clear cache
         "--onedir",                # Single folder distribution (fast startup, zero DLL extraction lag)
         "--windowed",              # No terminal console pop-up
         "--name", "ShohojMacro",
@@ -39,6 +40,8 @@ def build_executable():
         "--add-data", f"{ctk_dir};customtkinter",
         # Add assets folder
         "--add-data", "assets;assets",
+        # Collect all shohoj_macro modules
+        "--collect-all", "shohoj_macro",
         # Hidden imports
         "--hidden-import", "PIL",
         "--hidden-import", "PIL._tkinter_finder",
@@ -48,7 +51,12 @@ def build_executable():
         "--hidden-import", "cv2",
         "--hidden-import", "numpy",
         "--hidden-import", "customtkinter",
+        "--hidden-import", "openpyxl",
         "--hidden-import", "shohoj_macro",
+        "--hidden-import", "shohoj_macro.ai",
+        "--hidden-import", "shohoj_macro.core",
+        "--hidden-import", "shohoj_macro.gui",
+        "--hidden-import", "shohoj_macro.utils",
         # Entry point
         "main.py"
     ]

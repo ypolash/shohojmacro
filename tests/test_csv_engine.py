@@ -44,6 +44,28 @@ class TestCSVEngine(unittest.TestCase):
         unmapped = self.engine.validate_variables("{{username}} {{non_existent}}")
         self.assertEqual(unmapped, ["non_existent"])
 
+    def test_mark_row_status_persists_to_disk(self):
+        self.engine.load_file(self.temp_file.name)
+        
+        callback_log = []
+        self.engine.on_status_change = lambda idx, status: callback_log.append((idx, status))
+        
+        # Mark row 0 as "Polash"
+        self.engine.mark_row_status(0, "Status", "Polash")
+        
+        # Verify in memory
+        row_0 = self.engine.get_row_data(0)
+        self.assertEqual(row_0.get("Status"), "Polash")
+        self.assertEqual(callback_log, [(0, "Polash")])
+        
+        # Verify persisted to disk by loading in fresh engine
+        fresh_engine = CSVDataEngine()
+        success, _ = fresh_engine.load_file(self.temp_file.name)
+        self.assertTrue(success)
+        self.assertIn("Status", fresh_engine.headers)
+        fresh_row_0 = fresh_engine.get_row_data(0)
+        self.assertEqual(fresh_row_0.get("Status"), "Polash")
+
 
 if __name__ == "__main__":
     unittest.main()
