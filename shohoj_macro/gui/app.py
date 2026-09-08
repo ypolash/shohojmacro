@@ -123,7 +123,60 @@ class ShohojMacroStudio(ctk.CTk):
         self.log_panel.log("Zero-AI Visual State Engine & CSV Data Dock Ready.", "INFO")
         self.log_panel.log("Global Hotkeys Active: F8 (Record), F9 (Play/Pause), F10 (Emergency Stop)", "INFO")
 
+        # Background Update Check
+        from shohoj_macro.core.updater import UpdateChecker
+        UpdateChecker.check_for_updates_async(self._on_update_check_result)
+
+    def _manual_check_updates(self):
+        from shohoj_macro.core.updater import UpdateChecker
+        self.log_panel.log("Checking GitHub Releases API for updates...", "INFO")
+        def on_res(update_info):
+            if update_info:
+                self._on_update_check_result(update_info)
+            else:
+                self.after(0, lambda: messagebox.showinfo("Shohoj Macro Updates", f"You are running the latest version (v{__version__})."))
+        UpdateChecker.check_for_updates_async(on_res)
+
+    def _on_update_check_result(self, update_info):
+        if not update_info:
+            return
+            
+        def show_dialog():
+            ver = update_info.get("version")
+            title = update_info.get("title")
+            url = update_info.get("html_url")
+            download_url = update_info.get("download_url")
+            changelog = update_info.get("changelog", "")
+            
+            self.log_panel.log(f"🚀 Remote Update Available: v{ver} ({title})", "WARN")
+            
+            msg = f"A new version of Shohoj Macro is available!\n\n" \
+                  f"Current Version: v{__version__}\n" \
+                  f"Latest Version: v{ver}\n\n" \
+                  f"Click 'Yes' to Auto-Update now, 'No' to open GitHub download page, or 'Cancel' to skip."
+                  
+            res = messagebox.askyesnocancel(
+                "🚀 Shohoj Macro Remote Update",
+                msg
+            )
+            
+            if res is True:
+                try:
+                    self.log_panel.log(f"Downloading and applying update v{ver}...", "INFO")
+                    from shohoj_macro.core.updater import UpdateChecker
+                    UpdateChecker.trigger_auto_update(download_url)
+                except Exception as e:
+                    messagebox.showerror("Update Error", f"Failed to auto-update: {e}\nOpening browser instead.")
+                    import webbrowser
+                    webbrowser.open(url)
+            elif res is False:
+                import webbrowser
+                webbrowser.open(url)
+                
+        self.after(100, show_dialog)
+
     def _play_sound(self, sound_type="info"):
+
         """Plays subtle Windows audio feedback."""
         if not self.settings.get("audio_cues_enabled", True):
             return
@@ -177,7 +230,9 @@ class ShohojMacroStudio(ctk.CTk):
         self.btn_nav_export = create_nav_btn("📤 Export Macro", self._open_export)
         self.btn_nav_save = create_nav_btn("💾 Save Macro", self._save_macro)
         self.btn_nav_settings = create_nav_btn("⚙️ Settings", self._open_settings)
+        self.btn_nav_updates = create_nav_btn("🚀 Check Updates", self._manual_check_updates)
         self.btn_nav_about = create_nav_btn("ℹ️ About", lambda: AboutDialog(self))
+
 
         # --- Content Area ---
         self.content_area = ctk.CTkFrame(self.main_container, fg_color="transparent")
