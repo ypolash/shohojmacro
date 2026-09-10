@@ -25,7 +25,7 @@ def make_release_zips():
             for root, _, files in os.walk(app_dist_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, "dist")
+                    arcname = os.path.relpath(file_path, app_dist_dir)
                     zipf.write(file_path, arcname)
         print(f"[+] Created: {app_zip_path} ({os.path.getsize(app_zip_path) / (1024*1024):.2f} MB)")
     else:

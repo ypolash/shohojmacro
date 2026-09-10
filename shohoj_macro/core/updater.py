@@ -127,6 +127,7 @@ class UpdateChecker:
             
         temp_dir = tempfile.gettempdir()
         zip_path = os.path.join(temp_dir, "shohoj_update.zip")
+        extract_dir = os.path.join(temp_dir, "shohoj_extracted")
         bat_path = os.path.join(temp_dir, "apply_shohoj_update.bat")
         
         # Download ZIP
@@ -142,11 +143,22 @@ class UpdateChecker:
 title Updating Shohoj Macro...
 echo Waiting for Shohoj Macro to close...
 timeout /t 2 /nobreak > NUL
-echo Extracting update to {app_dir}...
-powershell -NoProfile -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{app_dir}' -Force"
+if exist "{extract_dir}" rmdir /s /q "{extract_dir}"
+echo Extracting update package...
+powershell -NoProfile -Command "Expand-Archive -Path '{zip_path}' -DestinationPath '{extract_dir}' -Force"
+
+if exist "{extract_dir}\\ShohojMacro\\ShohojMacro.exe" (
+    echo Copying update files from inner folder to {app_dir}...
+    xcopy /e /y /q "{extract_dir}\\ShohojMacro\\*" "{app_dir}\\"
+) else (
+    echo Copying update files to {app_dir}...
+    xcopy /e /y /q "{extract_dir}\\*" "{app_dir}\\"
+)
+
 echo Launching updated Shohoj Macro...
 start "" "{os.path.join(app_dir, 'ShohojMacro.exe')}"
-del "{zip_path}"
+del "{zip_path}" 2>nul
+rmdir /s /q "{extract_dir}" 2>nul
 (goto) 2>nul & del "%~f0"
 """
         with open(bat_path, "w", encoding="utf-8") as f:

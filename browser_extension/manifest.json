@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Shohoj Browser Companion",
-  "version": "2.0.0",
+  "version": "2.7.0",
   "description": "Stealth DOM Inspector & Coordinate Bridge for Shohoj Macro by Polash Khan (ypolash)",
   "permissions": [
     "activeTab",
