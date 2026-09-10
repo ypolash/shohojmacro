@@ -22,6 +22,7 @@ class UpdateChecker:
     """
     
     API_URL = "https://api.github.com/repos/ypolash/shohojmacro/releases/latest"
+    ATOM_URL = "https://github.com/ypolash/shohojmacro/releases.atom"
 
     @classmethod
     def check_for_updates_async(cls, on_result: Callable[[Optional[Dict[str, Any]]], None]):
@@ -34,18 +35,58 @@ class UpdateChecker:
         t.start()
 
     @classmethod
+    def _fetch_via_atom_feed(cls) -> Optional[Dict[str, Any]]:
+        """Fallback updater method using GitHub CDN Atom Feed (zero rate limits)."""
+        import xml.etree.ElementTree as ET
+        try:
+            headers = {"User-Agent": f"ShohojMacro-Updater/{__version__}"}
+            res = requests.get(cls.ATOM_URL, headers=headers, timeout=5.0)
+            if not res.ok:
+                return None
+            root = ET.fromstring(res.text)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            entries = root.findall('atom:entry', ns)
+            if not entries:
+                return None
+            latest = entries[0]
+            id_elem = latest.find('atom:id', ns)
+            title_elem = latest.find('atom:title', ns)
+            if id_elem is None or not id_elem.text:
+                return None
+            latest_tag = id_elem.text.strip().split('/')[-1]
+            title = title_elem.text if title_elem is not None else f"Shohoj Macro {latest_tag}"
+            
+            current_ver = parse_version_tuple(__version__)
+            latest_ver = parse_version_tuple(latest_tag)
+            if latest_ver > current_ver:
+                download_url = f"{__repo__}/releases/download/{latest_tag}/ShohojMacro-{latest_tag}-Windows-x64.zip"
+                return {
+                    "version": latest_tag.lstrip("v"),
+                    "tag_name": latest_tag,
+                    "title": title,
+                    "html_url": f"{__repo__}/releases/tag/{latest_tag}",
+                    "download_url": download_url,
+                    "changelog": f"Shohoj Macro {latest_tag} Release",
+                    "published_at": ""
+                }
+        except Exception as e:
+            print(f"[UpdateChecker] Atom feed fallback failed: {e}")
+        return None
+
+    @classmethod
     def check_for_updates_sync(cls) -> Optional[Dict[str, Any]]:
         """Queries GitHub API synchronously. Returns update dict if a newer version is available."""
         try:
             headers = {"User-Agent": f"ShohojMacro-Updater/{__version__}"}
             res = requests.get(cls.API_URL, headers=headers, timeout=5.0)
             if not res.ok:
-                return None
+                print(f"[UpdateChecker] GitHub REST API returned HTTP {res.status_code}. Attempting Atom feed fallback...")
+                return cls._fetch_via_atom_feed()
                 
             data = res.json()
             latest_tag = data.get("tag_name", "")
             if not latest_tag:
-                return None
+                return cls._fetch_via_atom_feed()
                 
             current_ver = parse_version_tuple(__version__)
             latest_ver = parse_version_tuple(latest_tag)
@@ -73,7 +114,8 @@ class UpdateChecker:
                     "published_at": data.get("published_at", "")
                 }
         except Exception as e:
-            print(f"[UpdateChecker] Check failed: {e}")
+            print(f"[UpdateChecker] Check failed: {e}. Trying Atom feed fallback...")
+            return cls._fetch_via_atom_feed()
             
         return None
 
