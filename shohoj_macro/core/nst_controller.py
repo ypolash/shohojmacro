@@ -6,24 +6,66 @@ from typing import Optional, Dict
 class NSTController:
     """
     Dual-Strategy NST Browser Controller.
-    Strategy A: API Mode (Fast, invisible, requires API key)
-    Strategy B: GUI Mode (Uses physical mouse/keyboard, no API key needed)
+    Strategy A: API Mode (Fast, invisible, uses NST Local API)
+    Strategy B: GUI Mode (Uses physical mouse/keyboard, fallback when API is unauthenticated or fails)
     """
     
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key
-        self.base_url = "http://localhost:8848/api/v2"
+    def __init__(self, api_key: str = None, local_url: str = None):
+        from shohoj_macro.core.settings_manager import SettingsManager
+        sm = SettingsManager()
+        self.api_key = api_key if api_key is not None else sm.get("nst", "api_key", "")
+        url = local_url if local_url is not None else sm.get("nst", "local_url", "http://localhost:8848")
+        
+        self.base_url = url.rstrip("/")
+        if not self.base_url.endswith("/api/v2") and not self.base_url.endswith("/api/v1"):
+            self.base_url = f"{self.base_url}/api/v2"
+            
         self.headers = {"x-api-key": self.api_key} if self.api_key else {}
+        self.last_launched_profile_id: Optional[str] = None
         
     def _is_api_mode(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key or self.base_url)
         
-    def prepare_and_launch(self, email: str, proxy_string: str) -> Optional[str]:
+    def prepare_and_launch(self, email: str, proxy_string: str = "") -> Optional[str]:
         """
-        Main entry point. Finds profile by email, updates proxy, and launches.
+        Main entry point. Finds profile by email, updates proxy if provided, and launches.
         Returns the webSocketDebuggerUrl if successful.
         """
-        return self._launch_via_api(email, proxy_string)
+        if not email:
+            raise ValueError("Profile email/name cannot be empty.")
+            
+        try:
+            ws_url = self._launch_via_api(email, proxy_string)
+            if ws_url:
+                return ws_url
+        except Exception as api_err:
+            from shohoj_macro.core.settings_manager import SettingsManager
+            sm = SettingsManager()
+            fallback = sm.get("nst", "enable_gui_fallback", True)
+            if not fallback:
+                raise api_err
+            print(f"[NSTController] API launch error ({api_err}). Attempting GUI fallback...")
+            return self._launch_via_gui(email, proxy_string)
+            
+        return None
+
+    def stop_profile(self, profile_id: str = None) -> bool:
+        """Stops/closes an active NST profile to prevent RAM and port accumulation."""
+        target_id = profile_id or self.last_launched_profile_id
+        if not target_id:
+            return False
+            
+        stop_url = f"{self.base_url}/stop/{target_id}"
+        try:
+            res = requests.post(stop_url, headers=self.headers, timeout=3)
+            if res.ok:
+                print(f"[NSTController] Stopped profile {target_id}")
+                if target_id == self.last_launched_profile_id:
+                    self.last_launched_profile_id = None
+                return True
+        except Exception as e:
+            print(f"[NSTController] Error stopping profile {target_id}: {e}")
+        return False
 
     def find_running_browser_ws_url(self, exclude_port: Optional[int] = None) -> Optional[str]:
         """
@@ -84,54 +126,98 @@ class NSTController:
         return None
             
     def _launch_via_api(self, email: str, proxy_string: str) -> Optional[str]:
-        """Strategy A: Use localhost API."""
-        # 1. Search profile by email
-        search_url = f"{self.base_url}/profiles?s={email}"
+        """Strategy A: Use NST Local API."""
+        import urllib.parse
+        # 1. Search profile by email / name
+        quoted_email = urllib.parse.quote(email)
+        search_url = f"{self.base_url}/profiles?s={quoted_email}"
         try:
-            res = requests.get(search_url, headers=self.headers)
+            res = requests.get(search_url, headers=self.headers, timeout=5)
             if not res.ok:
-                raise Exception(f"HTTP {res.status_code} from NST: {res.text}")
+                raise Exception(f"HTTP {res.status_code} from NST API: {res.text}")
         except requests.exceptions.ConnectionError:
-            raise Exception("Cannot connect to NST Local API on port 8848. Is it running?")
+            raise Exception(f"Cannot connect to NST Local API at '{self.base_url}'. Is NST Browser running?")
             
         data = res.json().get("data", {})
         docs = data.get("docs", [])
         if not docs:
             raise Exception(f"Profile not found for email: '{email}'")
             
-        profile_id = docs[0].get("id")
+        # Match exact name/email if multiple results returned
+        matched_doc = None
+        email_clean = email.strip().lower()
+        for doc in docs:
+            name = str(doc.get("name", "")).strip().lower()
+            doc_email = str(doc.get("email", "")).strip().lower()
+            if name == email_clean or doc_email == email_clean:
+                matched_doc = doc
+                break
+        if not matched_doc:
+            for doc in docs:
+                name = str(doc.get("name", "")).strip().lower()
+                doc_email = str(doc.get("email", "")).strip().lower()
+                if email_clean in name or email_clean in doc_email:
+                    matched_doc = doc
+                    break
+        if not matched_doc:
+            matched_doc = docs[0]
+            
+        profile_id = matched_doc.get("profileId") or matched_doc.get("id") or matched_doc.get("_id")
+        if not profile_id:
+            raise Exception(f"Profile found for '{email}', but could not extract profileId from: {matched_doc}")
+            
+        self.last_launched_profile_id = profile_id
         
-        # 2. Update Proxy
-        # Assuming the API takes the raw SOAX string or we might need to parse it
-        # For now, we will just start the profile since proxy API endpoint docs vary
-        # (This will be fleshed out when we have a valid key to test the exact payload)
-        
-        # 3. Launch Profile
+        # 2. Launch Profile via GET endpoint
         connect_url = f"{self.base_url}/connect/{profile_id}"
-        conn_res = requests.post(connect_url, headers=self.headers)
+        conn_res = requests.get(connect_url, headers=self.headers, timeout=10)
         if not conn_res.ok:
+            if conn_res.status_code in (401, 400) or "unauthorized" in conn_res.text.lower():
+                raise Exception(f"NST API key required or invalid. Please enter your valid API key in Settings -> Proxy & Browser.")
             raise Exception(f"HTTP {conn_res.status_code} launching profile: {conn_res.text}")
             
         conn_data = conn_res.json().get("data", {})
-        ws_url = conn_data.get("webSocketDebuggerUrl")
+        ws_url = conn_data.get("webSocketDebuggerUrl") or conn_data.get("ws")
+        if not ws_url and conn_data.get("port"):
+            ws_url = f"ws://127.0.0.1:{conn_data.get('port')}/devtools/browser"
+            
         if not ws_url:
-            raise Exception(f"NST started but no webSocketDebuggerUrl was returned: {conn_res.text}")
+            raise Exception(f"NST profile launched but no webSocketDebuggerUrl was returned: {conn_res.text}")
+            
         return ws_url
         
-    def _launch_via_gui(self, email: str, proxy_string: str) -> Optional[str]:
+    def _launch_via_gui(self, email: str, proxy_string: str = "") -> Optional[str]:
         """
-        Strategy B: Use physical mouse and keyboard.
-        (This will be implemented using Shohoj's existing Humanizer/CV engine in Sprint 2.
-         For now, we outline the steps).
+        Strategy B: Win32 Focus & Physical Mouse/Keyboard Search Fallback.
         """
-        print(f"[GUI Mode] Searching for {email} in NST window...")
-        # Step 1: Focus NST Window (win32gui)
-        # Step 2: Click Search Box (CV anchor)
-        # Step 3: Type Email (pyautogui.write)
-        # Step 4: Check Proxy Country Text (OCR)
-        # Step 5: If mismatch, click proxy, paste proxy_string, click Update
-        # Step 6: Click Play button
-        # Step 7: Wait for browser to open and extract debug port from process args
-        
-        print("[GUI Mode] Profile launched.")
-        return None # Return None for now until CDP extraction is built
+        print(f"[GUI Mode] Searching for '{email}' in NST Browser window...")
+        try:
+            import win32gui
+            import win32con
+            
+            hwnd = None
+            def _enum_windows(h, _):
+                nonlocal hwnd
+                if win32gui.IsWindowVisible(h):
+                    t = win32gui.GetWindowText(h)
+                    if "NST" in t or "NstBrowser" in t:
+                        hwnd = h
+            win32gui.EnumWindows(_enum_windows, None)
+            
+            if hwnd:
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.4)
+                pyautogui.hotkey("ctrl", "f")
+                time.sleep(0.3)
+                pyautogui.hotkey("ctrl", "a")
+                pyautogui.press("backspace")
+                pyautogui.write(email, interval=0.02)
+                pyautogui.press("enter")
+                time.sleep(1.0)
+                
+            return self.find_running_browser_ws_url()
+        except Exception as e:
+            print(f"[GUI Mode] Exception during visual fallback: {e}")
+            return None
+

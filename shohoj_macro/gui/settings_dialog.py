@@ -180,16 +180,61 @@ class SettingsDialog(ctk.CTkToplevel):
         
         ctk.CTkLabel(self.tab_nst, text="NST Local Endpoint URL:", text_color=GlassTheme.TEXT_PRIMARY).pack(anchor="w", padx=10, pady=(10, 2))
         self.entry_nst_url = ctk.CTkEntry(self.tab_nst, width=300)
-        self.entry_nst_url.pack(anchor="w", fill="x", padx=10, pady=(0, 20))
+        self.entry_nst_url.pack(anchor="w", fill="x", padx=10, pady=(0, 15))
         self.entry_nst_url.insert(0, self.settings_mgr.get("nst", "local_url", "http://localhost:8848"))
+
+        ctk.CTkLabel(self.tab_nst, text="Default Profile Search Column Header (e.g. Email):", text_color=GlassTheme.TEXT_PRIMARY).pack(anchor="w", padx=10, pady=(5, 2))
+        self.entry_nst_col = ctk.CTkEntry(self.tab_nst, width=300, placeholder_text="Email")
+        self.entry_nst_col.pack(anchor="w", fill="x", padx=10, pady=(0, 15))
+        self.entry_nst_col.insert(0, self.settings_mgr.get("nst", "profile_column", "Email"))
         
         fallback_val = self.settings_mgr.get("nst", "enable_gui_fallback", True)
-        self.chk_fallback = ctk.CTkSwitch(self.tab_nst, text="Enable GUI Visual Fallback (if NST fails)")
-        self.chk_fallback.pack(anchor="w", padx=10)
+        self.chk_fallback = ctk.CTkSwitch(self.tab_nst, text="Enable GUI Visual Fallback (if NST API fails)")
+        self.chk_fallback.pack(anchor="w", padx=10, pady=(0, 8))
         if fallback_val:
             self.chk_fallback.select()
         else:
             self.chk_fallback.deselect()
+
+        close_val = self.settings_mgr.get("nst", "auto_close_profile", True)
+        self.chk_autoclose = ctk.CTkSwitch(self.tab_nst, text="Auto-Close Profile on Row Completion")
+        self.chk_autoclose.pack(anchor="w", padx=10, pady=(0, 15))
+        if close_val:
+            self.chk_autoclose.select()
+        else:
+            self.chk_autoclose.deselect()
+
+        self.btn_test_nst = ctk.CTkButton(
+            self.tab_nst,
+            text="⚡ Test NST API Connection",
+            command=self._test_nst_connection,
+            fg_color=GlassTheme.CARD_BG_SECONDARY,
+            hover_color="#2A3554",
+            text_color=GlassTheme.ACCENT_CYAN,
+            height=30
+        )
+        self.btn_test_nst.pack(anchor="w", padx=10, pady=(5, 10))
+
+    def _test_nst_connection(self):
+        import requests
+        from tkinter import messagebox
+        url = self.entry_nst_url.get().strip().rstrip("/")
+        api_key = self.entry_nst_key.get().strip()
+        
+        if not url.endswith("/api/v2") and not url.endswith("/api/v1"):
+            target_url = f"{url}/api/v2/profiles?s=test"
+        else:
+            target_url = f"{url}/profiles?s=test"
+            
+        headers = {"x-api-key": api_key} if api_key else {}
+        try:
+            res = requests.get(target_url, headers=headers, timeout=3)
+            if res.ok:
+                messagebox.showinfo("NST API Test", f"✅ Successfully connected to NST Local API!\nResponse status: {res.status_code}")
+            else:
+                messagebox.showwarning("NST API Warning", f"⚠️ Reached NST server but received status {res.status_code}:\n{res.text[:200]}")
+        except Exception as e:
+            messagebox.showerror("NST API Connection Error", f"❌ Cannot connect to NST Local API at '{url}'.\n\nError: {e}\n\nPlease check if NST Browser is running.")
 
     def _build_hotkeys_tab(self):
         ctk.CTkLabel(self.tab_hotkeys, text="Global Hotkeys", font=ctk.CTkFont(size=12, weight="bold"), text_color=GlassTheme.TEXT_PRIMARY).pack(anchor="w", padx=10, pady=(10, 5))
@@ -264,9 +309,11 @@ class SettingsDialog(ctk.CTkToplevel):
         })
         
         self.settings_mgr.update_category("nst", {
-            "api_key": self.entry_nst_key.get(),
-            "local_url": self.entry_nst_url.get(),
-            "enable_gui_fallback": bool(self.chk_fallback.get())
+            "api_key": self.entry_nst_key.get().strip(),
+            "local_url": self.entry_nst_url.get().strip(),
+            "profile_column": self.entry_nst_col.get().strip(),
+            "enable_gui_fallback": bool(self.chk_fallback.get()),
+            "auto_close_profile": bool(self.chk_autoclose.get())
         })
         self.settings_mgr.save()
         

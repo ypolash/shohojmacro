@@ -1,6 +1,6 @@
-# ⚡ Shohoj Macro v2.0.0 (Enterprise Stealth & Data Edition)
+# ⚡ Shohoj Macro v2.7.0 (Enterprise Dual-Strategy NST & Auto-Updater Release)
 
-> **Autonomous Stealth Automation, Zero-AI Visual Synchronization & CSV Data Engine for Windows**  
+> **Autonomous Stealth Automation, Dual-Strategy NST Browser Engine, Remote Auto-Updater & CSV Data Engine for Windows**  
 > *Developed by [Polash Khan](https://github.com/ypolash) (`@ypolash`)*
 
 ---
@@ -9,10 +9,28 @@
 
 | Package | File | Description |
 |---|---|---|
-| 💻 **Standalone Desktop Application** | **[`ShohojMacro-v2.0.0-Windows-x64.zip`](https://github.com/ypolash/shohojmacro/releases/download/v2.0.0/ShohojMacro-v2.0.0-Windows-x64.zip)** | Complete portable app for Windows 10 & 11. **No Python or dependencies needed — ready to run!** |
-| 🌐 **Browser Companion Extension** | **[`ShohojCompanion-Extension-v2.0.0.zip`](https://github.com/ypolash/shohojmacro/releases/download/v2.0.0/ShohojCompanion-Extension-v2.0.0.zip)** | Chrome & Edge Manifest V3 extension for 1-click DOM element picking and stealth hardware click bridge. |
+| 💻 **Standalone Desktop Application** | **[`ShohojMacro-v2.7.0-Windows-x64.zip`](https://github.com/ypolash/shohojmacro/releases/download/v2.7.0/ShohojMacro-v2.7.0-Windows-x64.zip)** | Complete portable app for Windows 10 & 11. **No Python or dependencies needed — ready to run!** |
+| 🌐 **Browser Companion Extension** | **[`ShohojCompanion-Extension-v2.7.0.zip`](https://github.com/ypolash/shohojmacro/releases/download/v2.7.0/ShohojCompanion-Extension-v2.7.0.zip)** | Chrome & Edge Manifest V3 extension for 1-click DOM element picking and stealth hardware click bridge. |
 
 ---
+
+## 🌟 Key Highlights & Features in v2.7.0
+
+### 🚀 1. Dual-Strategy NST Browser Controller
+- **Strategy A (Local REST API):** High-speed, invisible profile search, proxy assignment, and remote debugger port resolution via NST Local API (`http://localhost:8848`).
+- **Strategy B (Win32 Visual Fallback):** Automatic Win32 focus and physical search fallback if the NST API is unauthenticated or fails.
+- **Dynamic Profile Search Column:** Configure default lookup column headers (e.g., `Email`, `Username`, `User`, `Profile ID`) directly in Settings.
+- **Safe URL Encoding & Substring Matcher:** RFC-compliant URL parameter encoding for emails containing special characters (`+`, `&`) with intelligent substring profile matching.
+- **Auto-Close Profile Teardown:** Automatically closes active browser profiles on row completion to prevent RAM and debugging port leaks.
+
+### ⚡ 2. 1-Click Remote Auto-Updater
+- **GitHub Release Integration:** Automatically queries GitHub Releases API on startup to detect newer versions.
+- **1-Click Auto-Update Flow:** Displays release release notes and downloads/installs update zips seamlessly without manual re-installation.
+- **Live Connection Diagnostics:** Test NST Local API connection status instantly from Settings -> Proxy & Browser.
+
+---
+
+# ⚡ Shohoj Macro v2.0.0 (Enterprise Stealth & Data Edition)
 
 ## 🌟 Key Highlights & Features in v2.0.0
 

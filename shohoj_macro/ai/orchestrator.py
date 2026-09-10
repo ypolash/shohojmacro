@@ -111,7 +111,8 @@ class OperationOrchestrator:
                           auto_launch_profiles: bool = False,
                           semi_automated: bool = True,
                           confirmation_word: str = "Polash",
-                          completion_action: str = "➡️ Move to Next Row"):
+                          completion_action: str = "➡️ Move to Next Row",
+                          profile_column: str = ""):
         """Execute operation across dataset rows in a background worker thread."""
         self._stop_requested = False
         self._manual_resume_event.clear()
@@ -159,7 +160,7 @@ class OperationOrchestrator:
 
         thread = threading.Thread(
             target=self._run_loop,
-            args=(start_row, end_row, macro_path, target_url, semi_automated, is_csv),
+            args=(start_row, end_row, macro_path, target_url, semi_automated, is_csv, profile_column),
             daemon=True
         )
         thread.start()
@@ -170,7 +171,7 @@ class OperationOrchestrator:
         else:
             resume_callback(True)
 
-    def _run_loop(self, start_row: int, end_row: int, macro_path: str, target_url: str, semi_automated: bool, is_csv: bool):
+    def _run_loop(self, start_row: int, end_row: int, macro_path: str, target_url: str, semi_automated: bool, is_csv: bool, profile_column: str = ""):
         self.log(f"Starting Operation from Row {start_row} to {end_row} (Semi-Auto: {semi_automated})")
 
         try:
@@ -238,12 +239,28 @@ class OperationOrchestrator:
                     proxy = self.proxy_manager.get_random_proxy()
                     proxy_str = proxy.raw_string if proxy else ""
 
-                    email = raw_data.get("Username") or raw_data.get("Email") or raw_data.get("User", f"user_{display_row}")
-                    self.log(f"Launching profile for {email}...")
+                    # Resolve profile search email/name from specified column or fallbacks
+                    sm = SettingsManager()
+                    target_col = profile_column or sm.get("nst", "profile_column", "")
+                    email = ""
+                    if target_col and raw_data.get(target_col):
+                        email = str(raw_data.get(target_col)).strip()
+                    else:
+                        for key in ["Email", "email", "EMAIL", "Username", "username", "User", "user", "Profile", "profile"]:
+                            if raw_data.get(key):
+                                email = str(raw_data.get(key)).strip()
+                                break
+                    if not email:
+                        email = f"user_{display_row}"
+
+                    self.log(f"Searching & launching NST profile for '{email}'...")
 
                     ws_url = self.nst.prepare_and_launch(email, proxy_str)
                     if ws_url:
                         self.cdp.connect(ws_url)
+                        self.log(f"✅ CDP connected to NST profile '{email}'", "SUCCESS")
+                    else:
+                        raise Exception(f"Failed to obtain debug URL for NST profile '{email}'")
                 else:
                     # Check if existing connection is still responsive
                     is_current_alive = False
@@ -384,6 +401,8 @@ class OperationOrchestrator:
                 # Teardown Profile if managed
                 if getattr(self, 'auto_launch_profiles', False):
                     self.cdp.disconnect()
+                    if SettingsManager().get("nst", "auto_close_profile", True):
+                        self.nst.stop_profile()
 
             except Exception as e:
                 err_str = str(e)

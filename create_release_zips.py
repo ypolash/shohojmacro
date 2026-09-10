@@ -6,17 +6,18 @@ Creates clean, portable .zip distribution bundles for GitHub Releases.
 import os
 import shutil
 import zipfile
+from shohoj_macro.version import __version__
 
 def make_release_zips():
     print("==================================================")
-    print("  Creating Shohoj Macro v2.0.0 Release Packages...")
+    print(f"  Creating Shohoj Macro v{__version__} Release Packages...")
     print("==================================================")
 
     os.makedirs("releases", exist_ok=True)
 
     # 1. Package Standalone Windows App
     app_dist_dir = "dist/ShohojMacro"
-    app_zip_path = "releases/ShohojMacro-v2.0.0-Windows-x64.zip"
+    app_zip_path = f"releases/ShohojMacro-v{__version__}-Windows-x64.zip"
 
     if os.path.exists(app_dist_dir):
         print(f"[*] Compressing Standalone Windows App from '{app_dist_dir}'...")
@@ -32,7 +33,7 @@ def make_release_zips():
 
     # 2. Package Browser Companion Extension
     ext_dir = "browser_extension"
-    ext_zip_path = "releases/ShohojCompanion-Extension-v2.0.0.zip"
+    ext_zip_path = f"releases/ShohojCompanion-Extension-v{__version__}.zip"
 
     if os.path.exists(ext_dir):
         print(f"[*] Compressing Browser Companion Extension from '{ext_dir}'...")

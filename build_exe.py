@@ -26,12 +26,14 @@ def build_executable():
         create_app_icon()
 
     # 3. Construct PyInstaller command
+    dist_build_dir = os.path.abspath("dist_build")
     pyinstaller_cmd = [
         sys.executable,
         "-m",
         "PyInstaller",
         "--noconfirm",
-        "--clean",                 # Clear cache
+        "--clean",
+        "--distpath", dist_build_dir,
         "--onedir",                # Single folder distribution (fast startup, zero DLL extraction lag)
         "--windowed",              # No terminal console pop-up
         "--name", "ShohojMacro",
@@ -65,10 +67,17 @@ def build_executable():
     result = subprocess.run(pyinstaller_cmd)
 
     if result.returncode == 0:
+        target_dist = os.path.abspath("dist/ShohojMacro")
+        src_dist = os.path.join(dist_build_dir, "ShohojMacro")
+        print(f"[*] Copying build output from {src_dist} to {target_dist}...")
+        try:
+            shutil.copytree(src_dist, target_dist, dirs_exist_ok=True)
+        except Exception as copy_err:
+            print(f"[!] Warning copying to dist: {copy_err}")
+            
         print("\n==================================================")
         print("  [SUCCESS] Shohoj Macro Executable built!")
-        dist_dir = os.path.abspath("dist/ShohojMacro")
-        exe_path = os.path.join(dist_dir, "ShohojMacro.exe")
+        exe_path = os.path.join(target_dist, "ShohojMacro.exe")
         print(f"  Executable location: {exe_path}")
         print("==================================================")
         return True

@@ -41,4 +41,6 @@ temp/
 wal_journal.bin
 releases/*.zip
 ffmpeg*
+dist_build/
+scratch/
 
